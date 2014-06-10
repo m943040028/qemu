@@ -1225,11 +1225,8 @@ static inline bool arm_excp_unmasked(CPUState *cs, unsigned int excp_idx)
 {
     CPUARMState *env = cs->env_ptr;
     unsigned int cur_el = arm_current_pl(env);
-    unsigned int target_el = arm_excp_target_el(cs, excp_idx);
-    /* FIXME: Use actual secure state.  */
-    bool secure = false;
-    /* If in EL1/0, Physical IRQ routing to EL2 only happens from NS state.  */
-    bool irq_can_hyp = !secure && cur_el < 2 && target_el == 2;
+    bool secure = arm_is_secure(env);
+
     /* ARMv7-M interrupt return works by loading a magic value
      * into the PC.  On real hardware the load causes the
      * return to occur.  The qemu implementation performs the
@@ -1244,19 +1241,118 @@ static inline bool arm_excp_unmasked(CPUState *cs, unsigned int excp_idx)
                         && (!IS_M(env) || env->regs[15] < 0xfffffff0);
 
     /* Don't take exceptions if they target a lower EL.  */
-    if (cur_el > target_el) {
+    if (cur_el > arm_excp_target_el(cs, excp_idx)) {
         return false;
     }
 
+    /* ARM ARMv7 B1.8.6  Asynchronous exception masking (table B1-12/B1-13)
+     * ARM ARMv8 G1.11.3 Asynchronous exception masking controls
+     * (table G1-18/G1-19) */
     switch (excp_idx) {
     case EXCP_FIQ:
-        if (irq_can_hyp && (env->cp15.hcr_el2 & HCR_FMO)) {
-            return true;
+        if (arm_feature(env, ARM_FEATURE_EL3) && arm_el_is_aa64(env, 3)) {
+            /* If EL3 is using Aarch64 and FIQs are routed to EL3 masking is
+             * ignored in all exception levels except EL3.
+             */
+            if ((env->cp15.scr_el3 & SCR_FIQ) && cur_el < 3) {
+                return true;
+            }
+            /* If we are in EL3 but FIQs are not routed to EL3 the exception
+             * is not taken but remains pending.
+             */
+            if (!(env->cp15.scr_el3 & SCR_FIQ) && cur_el == 3) {
+                return false;
+            }
+        }
+        if (!secure) {
+            if (arm_feature(env, ARM_FEATURE_EL2)) {
+                if (env->cp15.hcr_el2 & HCR_FMO) {
+                    /* CPSR.F/PSTATE.F ignored if
+                     *  - exception is taken from Non-secure state
+                     *  - HCR.FMO == 1
+                     *  - either:  - not in Hyp mode
+                     *             - SCR.FIQ routes exception to monitor mode
+                     *               (EL3 in Aarch32)
+                     */
+                    if (cur_el < 2) {
+                        return true;
+                    } else if (arm_feature(env, ARM_FEATURE_EL3) &&
+                            (env->cp15.scr_el3 & SCR_FIQ) &&
+                            !arm_el_is_aa64(env, 3)) {
+                        return true;
+                    }
+                } else if (arm_el_is_aa64(env, 3) &&
+                          (env->cp15.scr_el3 & SCR_RW) &&
+                          cur_el == 2) {
+                    /* FIQs not routed to EL2 but currently in EL2 (A64).
+                     * Exception is not taken but remains pending. */
+                    return false;
+                }
+            }
+            /* In ARMv7 only applies if both Security Extensions (EL3) and
+             * Hypervirtualization Extensions (EL2) implemented, while
+             * for ARMv8 it applies also if only EL3 implemented.
+             */
+            if (arm_feature(env, ARM_FEATURE_EL3) &&
+                    (arm_feature(env, ARM_FEATURE_EL2) ||
+                            arm_feature(env, ARM_FEATURE_V8))) {
+                /* CPSR.F/PSTATE.F ignored if
+                 * - exception is taken from Non-secure state
+                 * - SCR.FIQ routes exception to monitor mode
+                 * - SCR.FW bit is set to 0
+                 * - HCR.FMO == 0 (if EL2 implemented)
+                 */
+                if ((env->cp15.scr_el3 & SCR_FIQ) &&
+                        !(env->cp15.scr_el3 & SCR_FW)) {
+                    if (!arm_feature(env, ARM_FEATURE_EL2)) {
+                        return true;
+                    } else if (!(env->cp15.hcr_el2 & HCR_FMO)) {
+                        return true;
+                    }
+                }
+            }
         }
         return !(env->daif & PSTATE_F);
     case EXCP_IRQ:
-        if (irq_can_hyp && (env->cp15.hcr_el2 & HCR_IMO)) {
-            return true;
+        if (arm_feature(env, ARM_FEATURE_EL3) && arm_el_is_aa64(env, 3)) {
+            /* If EL3 is using Aarch64 and IRQs are routed to EL3 masking is
+             * ignored in all exception levels except EL3.
+             */
+            if ((env->cp15.scr_el3 & SCR_IRQ) && cur_el < 3) {
+                return true;
+            }
+            /* If we are in EL3 but IRQ s are not routed to EL3 the exception
+             * is not taken but remains pending.
+             */
+            if (!(env->cp15.scr_el3 & SCR_IRQ) && cur_el == 3) {
+                return false;
+            }
+        }
+        if (!secure) {
+            if (arm_feature(env, ARM_FEATURE_EL2)) {
+                if (env->cp15.hcr_el2 & HCR_IMO) {
+                    /* CPSR.I/PSTATE.I ignored if
+                     *  - exception is taken from Non-secure state
+                     *  - HCR.IMO == 1
+                     *  - either:  - not in Hyp mode
+                     *             - SCR.IRQ routes exception to monitor mode
+                     *                (EL3 in Aarch32)
+                     */
+                    if (cur_el < 2) {
+                        return true;
+                    } else if (arm_feature(env, ARM_FEATURE_EL3) &&
+                            (env->cp15.scr_el3 & SCR_IRQ) &&
+                            !arm_el_is_aa64(env, 3)) {
+                        return true;
+                    }
+                } else if (arm_el_is_aa64(env, 3) &&
+                          (env->cp15.scr_el3 & SCR_RW) &&
+                          cur_el == 2) {
+                    /* IRQs not routed to EL2 but currently in EL2 (A64).
+                     * Exception is not taken but remains pending. */
+                    return false;
+                }
+            }
         }
         return irq_unmasked;
     case EXCP_VFIQ:
