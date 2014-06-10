@@ -231,8 +231,14 @@ typedef struct CPUARMState {
                 uint64_t tcr_el3;
             };
         };
-        uint32_t c2_mask; /* MMU translation table base selection mask.  */
-        uint32_t c2_base_mask; /* MMU translation table base 0 mask. */
+        struct { /* MMU translation table base selection mask. */
+            uint32_t c2_mask_ns;
+            uint32_t c2_mask_s;
+        };
+        struct { /* MMU translation table base 0 mask. */
+            uint32_t c2_base_mask_ns;
+            uint32_t c2_base_mask_s;
+        };
         uint32_t c2_data; /* MPU data cachable bits.  */
         uint32_t c2_insn; /* MPU instruction cachable bits.  */
         uint32_t c3; /* MMU domain access control register
