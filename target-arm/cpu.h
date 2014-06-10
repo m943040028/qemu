@@ -178,7 +178,18 @@ typedef struct CPUARMState {
     struct {
         uint32_t c0_cpuid;
         uint64_t c0_cssel; /* Cache size selection.  */
-        uint64_t c1_sys; /* System control register.  */
+        union { /* System control register. */
+            struct {
+                uint64_t sctlr_ns;
+                uint64_t hsctlr;
+                uint64_t sctlr_s;
+            };
+            struct {
+                uint64_t sctlr_el1;
+                uint64_t sctlr_el2;
+                uint64_t sctlr_el3;
+            };
+        };
         uint64_t c1_coproc; /* Coprocessor access register.  */
         uint32_t c1_xscaleauxcr; /* XScale auxiliary control register.  */
         uint32_t c1_sder; /* Secure debug enable register. */

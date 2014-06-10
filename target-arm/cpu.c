@@ -103,7 +103,7 @@ static void arm_cpu_reset(CPUState *s)
 #if defined(CONFIG_USER_ONLY)
         env->pstate = PSTATE_MODE_EL0t;
         /* Userspace expects access to CTL_EL0 and the cache ops */
-        env->cp15.c1_sys |= SCTLR_UCT | SCTLR_UCI;
+        env->cp15.sctlr_el1 |= SCTLR_UCT | SCTLR_UCI;
         /* and to the FP/Neon instructions */
         env->cp15.c1_coproc = deposit64(env->cp15.c1_coproc, 20, 2, 3);
 #else
@@ -161,7 +161,8 @@ static void arm_cpu_reset(CPUState *s)
         env->thumb = initial_pc & 1;
     }
 
-    if (env->cp15.c1_sys & SCTLR_V) {
+    if (!arm_feature(env, ARM_FEATURE_V8)
+            && (A32_BANKED_CURRENT_REG_GET(env, sctlr) & SCTLR_V)) {
         env->regs[15] = 0xFFFF0000;
     }
 
