@@ -181,6 +181,7 @@ typedef struct CPUARMState {
         uint64_t c1_sys; /* System control register.  */
         uint64_t c1_coproc; /* Coprocessor access register.  */
         uint32_t c1_xscaleauxcr; /* XScale auxiliary control register.  */
+        uint32_t c1_nsacr; /* Non-secure access control register. */
         uint64_t ttbr0_el1; /* MMU translation table base 0. */
         uint64_t ttbr1_el1; /* MMU translation table base 1. */
         uint64_t c2_control; /* MMU translation table base control.  */
@@ -632,6 +633,11 @@ static inline void xpsr_write(CPUARMState *env, uint32_t val, uint32_t mask)
 #define SCR_TWE               (1U << 13)
 #define SCR_AARCH32_MASK      (0x3fff & ~(SCR_RW | SCR_ST))
 #define SCR_AARCH64_MASK      (0x3fff & ~SCR_NET)
+
+#define NSACR_NSTRCDIS (1U << 20)
+#define NSACR_RFR      (1U << 19)
+#define NSACR_NSASEDIS (1U << 15)
+#define NSACR_NSD32DIS (1U << 14)
 
 /* Return the current FPSCR value.  */
 uint32_t vfp_get_fpscr(CPUARMState *env);

@@ -520,7 +520,19 @@ static void cpacr_write(CPUARMState *env, const ARMCPRegInfo *ri,
             /* VFP coprocessor: cp10 & cp11 [23:20] */
             mask |= (1 << 31) | (1 << 30) | (0xf << 20);
 
-            if (!arm_feature(env, ARM_FEATURE_NEON)) {
+            if (arm_feature(env, ARM_FEATURE_NEON)) {
+                /* NSACR can disable non-secure writes to
+                 * ASEDIS [31] or D32DIS [30]
+                 */
+                if (arm_feature(env, ARM_FEATURE_EL3) && !arm_is_secure(env)) {
+                    if ((env->cp15.c1_nsacr & NSACR_NSASEDIS)) {
+                        mask &= ~(1 << 31);
+                    }
+                    if ((env->cp15.c1_nsacr & NSACR_NSD32DIS)) {
+                        mask &= ~(1 << 30);
+                    }
+                }
+            } else {
                 /* ASEDIS [31] bit is RAO/WI */
                 value |= (1 << 31);
             }
@@ -532,6 +544,7 @@ static void cpacr_write(CPUARMState *env, const ARMCPRegInfo *ri,
                     !arm_feature(env, ARM_FEATURE_VFP3)) {
                 /* D32DIS [30] is RAO/WI if D16-31 are not implemented. */
                 value |= (1 << 30);
+                mask |= (1 << 30);
             }
         }
         value &= mask;
@@ -2315,6 +2328,55 @@ static const ARMCPRegInfo v8_el2_cp_reginfo[] = {
     REGINFO_SENTINEL
 };
 
+static void nsacr_write(CPUARMState *env, const ARMCPRegInfo *ri,
+                      uint64_t value)
+{
+    uint32_t mask = 0;
+
+    /* Pre ARMv8 some bits are RAO or UNK/SBZP */
+    if (!arm_feature(env, ARM_FEATURE_V8)) {
+
+        if (arm_feature(env, ARM_FEATURE_VFP)) {
+            mask |= NSACR_NSASEDIS | NSACR_NSD32DIS;
+
+            if (!arm_feature(env, ARM_FEATURE_NEON)) {
+                /* NSASEDIS are RAO/WI */
+                value |= NSACR_NSASEDIS;
+            }
+
+            /* VFPv3 and upwards with NEON implement 32 double precision
+             * registers (D0-D31).
+             */
+            if (!arm_feature(env, ARM_FEATURE_NEON) ||
+                    !arm_feature(env, ARM_FEATURE_VFP3)) {
+                /* NSD32DIS is RAO/WI if D16-31 are not implemented. */
+                value |= NSACR_NSD32DIS;
+            }
+        }
+
+        /* cpn bits [13:0] */
+        mask = 0x3fff;
+
+        value &= mask;
+    }
+
+    raw_write(env, ri, value);
+}
+
+static uint64_t nsacr_read(CPUARMState *env, const ARMCPRegInfo *ri)
+{
+    uint64_t ret = raw_read(env, ri);
+
+    if (arm_feature(env, ARM_FEATURE_V8)) {
+        if (!arm_feature(env, ARM_FEATURE_EL3) || (
+                arm_el_is_aa64(env, 3) && !is_a64(env) &&
+                arm_current_pl(env) != 3)) {
+            ret = 0x0000C00;
+        }
+    }
+    return ret;
+}
+
 static const ARMCPRegInfo v8_el3_cp_reginfo[] = {
     { .name = "ELR_EL3", .state = ARM_CP_STATE_AA64,
       .type = ARM_CP_NO_MIGRATE,
@@ -2352,6 +2414,10 @@ static const ARMCPRegInfo v7_el3_cp_reginfo[] = {
     { .name = "SCR", .cp = 15, .crn = 1, .crm = 1, .opc1 = 0, .opc2 = 0,
       .access = PL3_RW, .fieldoffset = offsetof(CPUARMState, cp15.scr_el3),
       .secure = 1, .resetvalue = 0, .writefn = scr_write},
+    { .name = "NSACR", .cp = 15, .crn = 1, .crm = 1, .opc1 = 0, .opc2 = 2,
+      .access = PL3_RW | PL1_R, .resetvalue = 0, .secure = 0,
+      .writefn = nsacr_write, .readfn = nsacr_read,
+      .fieldoffset = offsetof(CPUARMState, cp15.c1_nsacr) },
     REGINFO_SENTINEL
 };
 
