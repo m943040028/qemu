@@ -1518,10 +1518,12 @@ static inline bool arm_singlestep_active(CPUARMState *env)
 #define ARM_TBFLAG_BSWAP_CODE_MASK  (1 << ARM_TBFLAG_BSWAP_CODE_SHIFT)
 #define ARM_TBFLAG_CPACR_FPEN_SHIFT 17
 #define ARM_TBFLAG_CPACR_FPEN_MASK  (1 << ARM_TBFLAG_CPACR_FPEN_SHIFT)
-#define ARM_TBFLAG_SS_ACTIVE_SHIFT 18
-#define ARM_TBFLAG_SS_ACTIVE_MASK (1 << ARM_TBFLAG_SS_ACTIVE_SHIFT)
-#define ARM_TBFLAG_PSTATE_SS_SHIFT 19
-#define ARM_TBFLAG_PSTATE_SS_MASK (1 << ARM_TBFLAG_PSTATE_SS_SHIFT)
+#define ARM_TBFLAG_SS_ACTIVE_SHIFT  18
+#define ARM_TBFLAG_SS_ACTIVE_MASK   (1 << ARM_TBFLAG_SS_ACTIVE_SHIFT)
+#define ARM_TBFLAG_PSTATE_SS_SHIFT  19
+#define ARM_TBFLAG_PSTATE_SS_MASK   (1 << ARM_TBFLAG_PSTATE_SS_SHIFT)
+#define ARM_TBFLAG_NS_SHIFT         20
+#define ARM_TBFLAG_NS_MASK          (1 << ARM_TBFLAG_NS_SHIFT)
 
 /* Bit usage when in AArch64 state */
 #define ARM_TBFLAG_AA64_EL_SHIFT    0
@@ -1532,6 +1534,8 @@ static inline bool arm_singlestep_active(CPUARMState *env)
 #define ARM_TBFLAG_AA64_SS_ACTIVE_MASK (1 << ARM_TBFLAG_AA64_SS_ACTIVE_SHIFT)
 #define ARM_TBFLAG_AA64_PSTATE_SS_SHIFT 4
 #define ARM_TBFLAG_AA64_PSTATE_SS_MASK (1 << ARM_TBFLAG_AA64_PSTATE_SS_SHIFT)
+#define ARM_TBFLAG_AA64_NS_SHIFT    3
+#define ARM_TBFLAG_AA64_NS_MASK     (1 << ARM_TBFLAG_AA64_NS_SHIFT)
 
 /* some convenience accessor macros */
 #define ARM_TBFLAG_AARCH64_STATE(F) \
@@ -1564,6 +1568,10 @@ static inline bool arm_singlestep_active(CPUARMState *env)
     (((F) & ARM_TBFLAG_AA64_SS_ACTIVE_MASK) >> ARM_TBFLAG_AA64_SS_ACTIVE_SHIFT)
 #define ARM_TBFLAG_AA64_PSTATE_SS(F) \
     (((F) & ARM_TBFLAG_AA64_PSTATE_SS_MASK) >> ARM_TBFLAG_AA64_PSTATE_SS_SHIFT)
+#define ARM_TBFLAG_NS(F) \
+    (((F) & ARM_TBFLAG_NS_MASK) >> ARM_TBFLAG_NS_SHIFT)
+#define ARM_TBFLAG_AA64_NS(F) \
+    (((F) & ARM_TBFLAG_AA64_NS_MASK) >> ARM_TBFLAG_AA64_NS_SHIFT)
 
 static inline void cpu_get_tb_cpu_state(CPUARMState *env, target_ulong *pc,
                                         target_ulong *cs_base, int *flags)
@@ -1597,6 +1605,9 @@ static inline void cpu_get_tb_cpu_state(CPUARMState *env, target_ulong *pc,
                 *flags |= ARM_TBFLAG_AA64_PSTATE_SS_MASK;
             }
         }
+        if (!(USE_SECURE_REG(env))) {
+            *flags |= ARM_TBFLAG_AA64_NS_MASK;
+        }
     } else {
         int privmode;
         *pc = env->regs[15];
@@ -1612,6 +1623,9 @@ static inline void cpu_get_tb_cpu_state(CPUARMState *env, target_ulong *pc,
         }
         if (privmode) {
             *flags |= ARM_TBFLAG_PRIV_MASK;
+        }
+        if (!(USE_SECURE_REG(env))) {
+            *flags |= ARM_TBFLAG_NS_MASK;
         }
         if (env->vfp.xregs[ARM_VFP_FPEXC] & (1 << 30)
             || arm_el_is_aa64(env, 1)) {

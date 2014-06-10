@@ -10926,6 +10926,7 @@ void gen_intermediate_code_internal_a64(ARMCPU *cpu,
 #if !defined(CONFIG_USER_ONLY)
     dc->user = (ARM_TBFLAG_AA64_EL(tb->flags) == 0);
 #endif
+    dc->ns = ARM_TBFLAG_AA64_NS(tb->flags);
     dc->cpacr_fpen = ARM_TBFLAG_AA64_FPEN(tb->flags);
     dc->vec_len = 0;
     dc->vec_stride = 0;
