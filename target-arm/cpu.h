@@ -177,7 +177,15 @@ typedef struct CPUARMState {
     /* System control coprocessor (cp15) */
     struct {
         uint32_t c0_cpuid;
-        uint64_t c0_cssel; /* Cache size selection.  */
+        union { /* Cache size selection */
+            struct {
+                uint64_t csselr_ns;
+                uint64_t csselr_s;
+            };
+            struct {
+                uint64_t csselr_el1;
+            };
+        };
         union { /* System control register. */
             struct {
                 uint64_t sctlr_ns;

@@ -789,7 +789,13 @@ static void scr_write(CPUARMState *env, const ARMCPRegInfo *ri, uint64_t value)
 static uint64_t ccsidr_read(CPUARMState *env, const ARMCPRegInfo *ri)
 {
     ARMCPU *cpu = arm_env_get_cpu(env);
-    return cpu->ccsidr[env->cp15.c0_cssel];
+
+    /* Acquire the CSSELR index from the bank corresponding to the CCSIDR
+     * bank
+     */
+    uint32_t index = A32_BANKED_REG_GET(env, csselr, USE_SECURE_REG(env));
+
+    return cpu->ccsidr[index];
 }
 
 static void csselr_write(CPUARMState *env, const ARMCPRegInfo *ri,
@@ -914,10 +920,11 @@ static const ARMCPRegInfo v7_cp_reginfo[] = {
     { .name = "CCSIDR", .state = ARM_CP_STATE_BOTH,
       .opc0 = 3, .crn = 0, .crm = 0, .opc1 = 1, .opc2 = 0,
       .access = PL1_R, .readfn = ccsidr_read, .type = ARM_CP_NO_MIGRATE },
-    { .name = "CSSELR", .state = ARM_CP_STATE_BOTH,
-      .opc0 = 3, .crn = 0, .crm = 0, .opc1 = 2, .opc2 = 0,
-      .access = PL1_RW, .fieldoffset = offsetof(CPUARMState, cp15.c0_cssel),
-      .writefn = csselr_write, .resetvalue = 0 },
+    { .name = "CSSELR", 
+      .cp = 15, .crn = 0, .crm = 0, .opc1 = 2, .opc2 = 0,
+      .access = PL1_RW, .writefn = csselr_write, .resetvalue = 0,
+      .bank_fieldoffsets = { offsetof(CPUARMState, cp15.csselr_s),
+                             offsetof(CPUARMState, cp15.csselr_el1) } },
     /* Auxiliary ID register: this actually has an IMPDEF value but for now
      * just RAZ for all cores:
      */
@@ -2275,6 +2282,10 @@ static const ARMCPRegInfo v8_cp_reginfo[] = {
       .opc0 = 3, .opc1 = 0, .crn = 4, .crm = 2, .opc2 = 0,
       .type = ARM_CP_NO_MIGRATE,
       .access = PL1_RW, .readfn = spsel_read, .writefn = spsel_write },
+    { .name = "CSSELR_EL1", .state = ARM_CP_STATE_AA64,
+      .opc0 = 3, .crn = 0, .crm = 0, .opc1 = 2, .opc2 = 0,
+      .access = PL1_RW, .writefn = csselr_write, .resetvalue = 0,
+      .fieldoffset = offsetof(CPUARMState, cp15.csselr_el1) },
     REGINFO_SENTINEL
 };
 
