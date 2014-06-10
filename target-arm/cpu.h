@@ -808,6 +808,8 @@ static inline bool arm_el_is_aa64(CPUARMState *env, int el)
 
 void arm_cpu_list(FILE *f, fprintf_function cpu_fprintf);
 unsigned int arm_excp_target_el(CPUState *cs, unsigned int excp_idx);
+inline uint32_t arm_phys_excp_target_el(CPUState *cs, uint32_t excp_idx,
+                                        uint32_t cur_el, bool secure);
 
 /* Interface between CPU and Interrupt controller.  */
 void armv7m_nvic_set_pending(void *opaque, int irq);

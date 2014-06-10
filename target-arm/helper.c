@@ -3589,6 +3589,12 @@ uint32_t HELPER(get_r13_banked)(CPUARMState *env, uint32_t mode)
     return 0;
 }
 
+inline uint32_t arm_phys_excp_target_el(CPUState *cs, uint32_t excp_idx,
+                                        uint32_t cur_el, bool secure)
+{
+    return 1;
+}
+
 unsigned int arm_excp_target_el(CPUState *cs, unsigned int excp_idx)
 {
     return 1;
@@ -3650,6 +3656,80 @@ void switch_mode(CPUARMState *env, int mode)
 }
 
 /*
+ * Determine the target EL for physical exceptions
+ */
+inline uint32_t arm_phys_excp_target_el(CPUState *cs, uint32_t excp_idx,
+                                        uint32_t cur_el, bool secure)
+{
+    CPUARMState *env = cs->env_ptr;
+    uint32_t target_el = 1;
+
+    /* There is no SCR or HCR routing unless the respective EL3 and EL2
+     * extensions are supported.  This initial setting affects whether any
+     * other conditions matter.
+     */
+    bool scr_routing = arm_feature(env, ARM_FEATURE_EL3); /* IRQ, FIQ, EA */
+    bool hcr_routing = arm_feature(env, ARM_FEATURE_EL2); /* IMO, FMO, AMO */
+
+    /* Fast-path if EL2 and EL3 are not enabled */
+    if (!scr_routing && !hcr_routing) {
+        return target_el;
+    }
+
+    switch (excp_idx) {
+    case EXCP_IRQ:
+        scr_routing &= ((env->cp15.scr_el3 & SCR_IRQ) == SCR_IRQ);
+        hcr_routing &= ((env->cp15.hcr_el2 & HCR_IMO) == HCR_IMO);
+        break;
+    case EXCP_FIQ:
+        scr_routing &= ((env->cp15.scr_el3 & SCR_FIQ) == SCR_FIQ);
+        hcr_routing &= ((env->cp15.hcr_el2 & HCR_FMO) == HCR_FMO);
+    }
+
+    /* If SCR routing is enabled we always go to EL3 regardless of EL3
+     * execution state
+     */
+    if (scr_routing) {
+        /* IRQ|FIQ|EA == 1 */
+        return 3;
+    }
+
+    /* If HCR.TGE is set all exceptions that would be routed to EL1 are
+     * routed to EL2 (in non-secure world).
+     */
+    hcr_routing &= (env->cp15.hcr_el2 & HCR_TGE) == HCR_TGE;
+
+    /* Determine target EL according to ARM ARMv8 tables G1-15 and G1-16 */
+    if (arm_el_is_aa64(env, 3)) {
+        /* EL3 in Aarch64 */
+        if (!secure) {
+            /* If non-secure, we may route to EL2 depending on other state.
+             * If we are coming from the secure world then we always route to
+             * EL1.
+             */
+            if (hcr_routing ||
+                (cur_el == 2 && !(env->cp15.scr_el3 & SCR_RW))) {
+                /* If HCR.FMO/IMO is set or we already in EL2 and it is not
+                 * configured to be AArch64 then route to EL2.
+                 */
+                target_el = 2;
+            }
+        }
+    } else {
+        /* EL3 in Aarch32 */
+        if (secure) {
+            /* If coming from secure always route to EL3 */
+            target_el = 3;
+        } else if (hcr_routing || cur_el == 2) {
+            /* If HCR.FMO/IMO is set or we are already EL2 then route to EL2 */
+            target_el = 2;
+        }
+    }
+
+    return target_el;
+}
+
+/*
  * Determine the target EL for a given exception type.
  */
 unsigned int arm_excp_target_el(CPUState *cs, unsigned int excp_idx)
@@ -3657,14 +3737,8 @@ unsigned int arm_excp_target_el(CPUState *cs, unsigned int excp_idx)
     ARMCPU *cpu = ARM_CPU(cs);
     CPUARMState *env = &cpu->env;
     unsigned int cur_el = arm_current_pl(env);
-    unsigned int target_el;
-    /* FIXME: Use actual secure state.  */
-    bool secure = false;
-
-    if (!env->aarch64) {
-        /* TODO: Add EL2 and 3 exception handling for AArch32.  */
-        return 1;
-    }
+    unsigned int target_el = 1;
+    bool secure = arm_is_secure(env);
 
     switch (excp_idx) {
     case EXCP_HVC:
@@ -3676,19 +3750,8 @@ unsigned int arm_excp_target_el(CPUState *cs, unsigned int excp_idx)
         break;
     case EXCP_FIQ:
     case EXCP_IRQ:
-    {
-        const uint64_t hcr_mask = excp_idx == EXCP_FIQ ? HCR_FMO : HCR_IMO;
-        const uint32_t scr_mask = excp_idx == EXCP_FIQ ? SCR_FIQ : SCR_IRQ;
-
-        target_el = 1;
-        if (!secure && (env->cp15.hcr_el2 & hcr_mask)) {
-            target_el = 2;
-        }
-        if (env->cp15.scr_el3 & scr_mask) {
-            target_el = 3;
-        }
+        target_el = arm_phys_excp_target_el(cs, excp_idx, cur_el, secure);
         break;
-    }
     case EXCP_VIRQ:
     case EXCP_VFIQ:
         target_el = 1;
