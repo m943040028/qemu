@@ -3514,9 +3514,6 @@ void cpsr_write(CPUARMState *env, uint32_t val, uint32_t mask)
         env->GE = (val >> 16) & 0xf;
     }
 
-    env->daif &= ~(CPSR_AIF & mask);
-    env->daif |= val & CPSR_AIF & mask;
-
     if ((env->uncached_cpsr ^ val) & mask & CPSR_M) {
         if (bad_mode_switch(env, val & CPSR_M)) {
             /* Attempt to switch to an invalid mode: this is UNPREDICTABLE.
@@ -3528,6 +3525,65 @@ void cpsr_write(CPUARMState *env, uint32_t val, uint32_t mask)
             switch_mode(env, val & CPSR_M);
         }
     }
+
+    /* In a V7 implementation that incldoes the security extensions but does
+     * not include Virtualization Extensions the SCR.FW and SCR.AW bits control
+     * whether non-secure software is allowed to change the CPSR_F and CPSR_A
+     * bits respectively.
+     *
+     * In a V8 implementation, it is permitted for privileged software to
+     * change the CPSR A/F bits regardless of the SCR.AW/FW bits.  However,
+     * when the SPSR is copied to the CPSR, the SCR.AW/FW bits control whether
+     * the CPSR.A/F bits are copied.
+     */
+    if (!arm_feature(env, ARM_FEATURE_V8)) {
+        if ((mask & CPSR_A) &&
+            (val & CPSR_A) != (env->uncached_cpsr & CPSR_A) &&
+            arm_feature(env, ARM_FEATURE_EL3) &&
+            !arm_feature(env, ARM_FEATURE_EL2) &&
+            !(env->cp15.scr_el3 & SCR_AW) && !arm_is_secure(env)) {
+            qemu_log_mask(LOG_GUEST_ERROR,
+                          "Ignoring attempt to switch CPSR_A flag from "
+                          "non-secure world with SCR.AW bit clear\n");
+            mask &= ~CPSR_A;
+        }
+
+        if ((mask & CPSR_F) &&
+            (val & CPSR_F) != (env->uncached_cpsr & CPSR_F)) {
+            /*
+             * The existence of the security extension (EL3) and the
+             * non-existence of the virtualization extension affects whether
+             * the CPSR.F bit can be modified.
+             */
+            if (arm_feature(env, ARM_FEATURE_EL3) &&
+                !arm_feature(env, ARM_FEATURE_EL2)) {
+                /* CPSR.F cannot be changed in nonsecure with SCR.FW clear */
+                if (!(env->cp15.scr_el3 & SCR_FW) && !arm_is_secure(env)) {
+                    qemu_log_mask(LOG_GUEST_ERROR,
+                                  "Ignoring attempt to switch CPSR_F flag from "
+                                  "non-secure world with SCR.FW bit clear\n");
+                    mask &= ~CPSR_F;
+                }
+
+                /* Check whether non-maskable FIQ (NMFI) support is enabled.
+                 * If this bit is set software is not allowed to mask
+                 * FIQs, but is allowed to set CPSR_F to 0.
+                 */
+                if ((A32_BANKED_CURRENT_REG_GET(env, sctlr) & SCTLR_NMFI) &&
+                    (val & CPSR_F)) {
+                    qemu_log_mask(LOG_GUEST_ERROR,
+                                  "Ignoring attempt to enable CPSR_F flag "
+                                  "(non-maskable FIQ [NMFI] support "
+                                  "enabled)\n");
+                    mask &= ~CPSR_F;
+                }
+            }
+        }
+    }
+
+    env->daif &= ~(CPSR_AIF & mask);
+    env->daif |= val & CPSR_AIF & mask;
+
     mask &= ~CACHED_CPSR_BITS;
     env->uncached_cpsr = (env->uncached_cpsr & ~mask) | (val & mask);
 }
