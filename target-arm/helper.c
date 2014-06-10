@@ -1660,8 +1660,9 @@ static const ARMCPRegInfo vmsa_cp_reginfo[] = {
       .fieldoffset = offsetoflow32(CPUARMState, cp15.esr_el[1]),
       .resetfn = arm_cp_reset_ignore, },
     { .name = "IFSR", .cp = 15, .crn = 5, .crm = 0, .opc1 = 0, .opc2 = 1,
-      .access = PL1_RW,
-      .fieldoffset = offsetof(CPUARMState, cp15.ifsr_el2), .resetvalue = 0, },
+      .access = PL1_RW, .resetvalue = 0,
+      .bank_fieldoffsets = { offsetof(CPUARMState, cp15.ifsr_s),
+                             offsetof(CPUARMState, cp15.ifsr_ns) } },
     { .name = "ESR_EL1", .state = ARM_CP_STATE_AA64,
       .opc0 = 3, .crn = 5, .crm = 2, .opc1 = 0, .opc2 = 0,
       .access = PL1_RW,
@@ -4244,11 +4245,11 @@ void arm_cpu_do_interrupt(CPUState *cs)
         env->exception.fsr = 2;
         /* Fall through to prefetch abort.  */
     case EXCP_PREFETCH_ABORT:
-        env->cp15.ifsr_el2 = env->exception.fsr;
+        A32_BANKED_CURRENT_REG_SET(env, ifsr, env->exception.fsr);
         env->cp15.far_el[1] = deposit64(env->cp15.far_el[1], 32, 32,
                                         env->exception.vaddress);
         qemu_log_mask(CPU_LOG_INT, "...with IFSR 0x%x IFAR 0x%x\n",
-                      env->cp15.ifsr_el2, (uint32_t)env->exception.vaddress);
+                      env->exception.fsr, (uint32_t)env->exception.vaddress);
         new_mode = ARM_CPU_MODE_ABT;
         addr = 0x0c;
         mask = CPSR_A | CPSR_I;
