@@ -420,12 +420,15 @@ static void tlbimvaa_is_write(CPUARMState *env, const ARMCPRegInfo *ri,
 
 static const ARMCPRegInfo cp_reginfo[] = {
     { .name = "FCSEIDR", .cp = 15, .crn = 13, .crm = 0, .opc1 = 0, .opc2 = 0,
-      .access = PL1_RW, .fieldoffset = offsetof(CPUARMState, cp15.c13_fcse),
-      .resetvalue = 0, .writefn = fcse_write, .raw_writefn = raw_write, },
-    { .name = "CONTEXTIDR", .state = ARM_CP_STATE_BOTH,
-      .opc0 = 3, .opc1 = 0, .crn = 13, .crm = 0, .opc2 = 1,
       .access = PL1_RW,
-      .fieldoffset = offsetof(CPUARMState, cp15.contextidr_el1),
+      .bank_fieldoffsets = { offsetof(CPUARMState, cp15.c13_fcseidr_s),
+                             offsetof(CPUARMState, cp15.c13_fcseidr_ns) },
+      .resetvalue = 0, .writefn = fcse_write, .raw_writefn = raw_write, },
+    { .name = "CONTEXTIDR",
+      .cp = 15, .opc1 = 0, .crn = 13, .crm = 0, .opc2 = 1,
+      .access = PL1_RW,
+      .bank_fieldoffsets = { offsetof(CPUARMState, cp15.contextidr_s),
+                             offsetof(CPUARMState, cp15.contextidr_ns) },
       .resetvalue = 0, .writefn = contextidr_write, .raw_writefn = raw_write, },
     REGINFO_SENTINEL
 };
@@ -1041,21 +1044,25 @@ static const ARMCPRegInfo v6k_cp_reginfo[] = {
       .access = PL0_RW,
       .fieldoffset = offsetof(CPUARMState, cp15.tpidr_el0), .resetvalue = 0 },
     { .name = "TPIDRURW", .cp = 15, .crn = 13, .crm = 0, .opc1 = 0, .opc2 = 2,
-      .access = PL0_RW,
-      .fieldoffset = offsetoflow32(CPUARMState, cp15.tpidr_el0),
-      .resetfn = arm_cp_reset_ignore },
+      .access = PL0_RW, .resetvalue = 0,
+      .bank_fieldoffsets = { offsetoflow32(CPUARMState, cp15.tpidrurw_s),
+                             offsetoflow32(CPUARMState, cp15.tpidrurw_ns) } },
     { .name = "TPIDRRO_EL0", .state = ARM_CP_STATE_AA64,
       .opc0 = 3, .opc1 = 3, .opc2 = 3, .crn = 13, .crm = 0,
       .access = PL0_R|PL1_W,
       .fieldoffset = offsetof(CPUARMState, cp15.tpidrro_el0), .resetvalue = 0 },
     { .name = "TPIDRURO", .cp = 15, .crn = 13, .crm = 0, .opc1 = 0, .opc2 = 3,
-      .access = PL0_R|PL1_W,
-      .fieldoffset = offsetoflow32(CPUARMState, cp15.tpidrro_el0),
-      .resetfn = arm_cp_reset_ignore },
-    { .name = "TPIDR_EL1", .state = ARM_CP_STATE_BOTH,
+      .access = PL0_R|PL1_W, .resetvalue = 0,
+      .bank_fieldoffsets = { offsetoflow32(CPUARMState, cp15.tpidruro_s),
+                             offsetoflow32(CPUARMState, cp15.tpidruro_ns) } },
+    { .name = "TPIDR_EL1", .state = ARM_CP_STATE_AA64,
       .opc0 = 3, .opc1 = 0, .opc2 = 4, .crn = 13, .crm = 0,
       .access = PL1_RW,
       .fieldoffset = offsetof(CPUARMState, cp15.tpidr_el1), .resetvalue = 0 },
+    { .name = "TPIDRPRW", .cp = 15, .crn = 13, .crm = 0, .opc1 = 0, .opc2 = 4,
+      .access = PL1_RW, .resetvalue = 0,
+      .bank_fieldoffsets = { offsetoflow32(CPUARMState, cp15.tpidrprw_s),
+                             offsetoflow32(CPUARMState, cp15.tpidrprw_ns) } },
     REGINFO_SENTINEL
 };
 
@@ -2323,6 +2330,11 @@ static const ARMCPRegInfo v8_cp_reginfo[] = {
       .opc0 = 3, .crn = 0, .crm = 0, .opc1 = 2, .opc2 = 0,
       .access = PL1_RW, .writefn = csselr_write, .resetvalue = 0,
       .fieldoffset = offsetof(CPUARMState, cp15.csselr_el1) },
+    { .name = "CONTEXTIDR_EL1", .state = ARM_CP_STATE_AA64,
+      .opc0 = 3, .opc1 = 0, .crn = 13, .crm = 0, .opc2 = 1,
+      .access = PL1_RW,
+      .fieldoffset = offsetof(CPUARMState, cp15.contextidr_el1),
+      .resetvalue = 0, .writefn = contextidr_write, .raw_writefn = raw_write },
     REGINFO_SENTINEL
 };
 
@@ -4999,7 +5011,7 @@ static inline int get_phys_addr(CPUARMState *env, target_ulong address,
 
     /* Fast Context Switch Extension.  */
     if (address < 0x02000000)
-        address += env->cp15.c13_fcse;
+        address += A32_BANKED_CURRENT_REG_GET(env, c13_fcseidr);
 
     if ((sctlr & SCTLR_M) == 0) {
         /* MMU/MPU disabled.  */
