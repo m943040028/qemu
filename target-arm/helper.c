@@ -1677,11 +1677,12 @@ static const ARMCPRegInfo vmsa_cp_reginfo[] = {
       .opc0 = 3, .crn = 2, .crm = 0, .opc1 = 0, .opc2 = 2,
       .access = PL1_RW, .writefn = vmsa_tcr_el1_write,
       .resetfn = vmsa_ttbcr_reset, .raw_writefn = raw_write,
-      .fieldoffset = offsetof(CPUARMState, cp15.c2_control) },
+      .fieldoffset = offsetof(CPUARMState, cp15.tcr_el1) },
     { .name = "TTBCR", .cp = 15, .crn = 2, .crm = 0, .opc1 = 0, .opc2 = 2,
       .access = PL1_RW, .type = ARM_CP_NO_MIGRATE, .writefn = vmsa_ttbcr_write,
       .resetfn = arm_cp_reset_ignore, .raw_writefn = vmsa_ttbcr_raw_write,
-      .fieldoffset = offsetoflow32(CPUARMState, cp15.c2_control) },
+      .bank_fieldoffsets = { offsetoflow32(CPUARMState, cp15.ttbcr_s),
+                             offsetoflow32(CPUARMState, cp15.ttbcr_ns) } },
     /* 64-bit FAR; this entry also gives us the AArch32 DFAR */
     { .name = "FAR_EL1", .state = ARM_CP_STATE_BOTH,
       .opc0 = 3, .crn = 6, .crm = 0, .opc1 = 0, .opc2 = 0,
@@ -2425,6 +2426,11 @@ static const ARMCPRegInfo v8_el3_cp_reginfo[] = {
       .opc0 = 3, .crn = 2, .crm = 0, .opc1 = 6, .opc2 = 0,
       .access = PL3_RW, .writefn = vmsa_ttbr_write, .resetvalue = 0,
       .fieldoffset = offsetof(CPUARMState, cp15.ttbr0_el3) },
+    { .name = "TCR_EL3", .state = ARM_CP_STATE_AA64,
+      .opc0 = 3, .crn = 2, .crm = 0, .opc1 = 6, .opc2 = 2,
+      .access = PL3_RW, .writefn = vmsa_tcr_el1_write,
+      .resetfn = vmsa_ttbcr_reset, .raw_writefn = raw_write,
+      .fieldoffset = offsetof(CPUARMState, cp15.tcr_el3) },
     { .name = "ELR_EL3", .state = ARM_CP_STATE_AA64,
       .type = ARM_CP_NO_MIGRATE,
       .opc0 = 3, .opc1 = 6, .crn = 4, .crm = 0, .opc2 = 1,
@@ -4387,13 +4393,13 @@ static bool get_level1_table_address(CPUARMState *env, uint32_t *table,
      * table registers.
      */
     if (address & env->cp15.c2_mask) {
-        if ((env->cp15.c2_control & TTBCR_PD1)) {
+        if (A32_BANKED_CURRENT_REG_GET(env, ttbcr) & TTBCR_PD1) {
             /* Translation table walk disabled for TTBR1 */
             return false;
         }
         *table = A32_BANKED_CURRENT_REG_GET(env, ttbr1) & 0xffffc000;
     } else {
-        if ((env->cp15.c2_control & TTBCR_PD0)) {
+        if (A32_BANKED_CURRENT_REG_GET(env, ttbcr) & TTBCR_PD0) {
             /* Translation table walk disabled for TTBR0 */
             return false;
         }
@@ -4653,13 +4659,29 @@ static int get_phys_addr_lpae(CPUARMState *env, target_ulong address,
     int32_t va_size = 32;
     int32_t tbi = 0;
     uint32_t cur_el = arm_current_pl(env);
+    uint64_t tcr;
 
-    if (arm_el_is_aa64(env, 1)) {
+    if (arm_el_is_aa64(env, 3)) {
+        switch (cur_el) {
+        case 3:
+            tcr = env->cp15.tcr_el3;
+            break;
+        case 1:
+        case 0:
+        default:
+            tcr = env->cp15.tcr_el1;
+        }
+
+    } else {
+        tcr = A32_BANKED_CURRENT_REG_GET(env, ttbcr);
+    }
+
+    if (arm_el_is_aa64(env, 1) && (cur_el == 0 || cur_el == 1)) {
         va_size = 64;
         if (extract64(address, 55, 1))
-            tbi = extract64(env->cp15.c2_control, 38, 1);
+            tbi = extract64(tcr, 38, 1);
         else
-            tbi = extract64(env->cp15.c2_control, 37, 1);
+            tbi = extract64(tcr, 37, 1);
         tbi *= 8;
     }
 
@@ -4668,12 +4690,12 @@ static int get_phys_addr_lpae(CPUARMState *env, target_ulong address,
      * This is a Non-secure PL0/1 stage 1 translation, so controlled by
      * TTBCR/TTBR0/TTBR1 in accordance with ARM ARM DDI0406C table B-32:
      */
-    uint32_t t0sz = extract32(env->cp15.c2_control, 0, 6);
+    uint32_t t0sz = extract32(tcr, 0, 6);
     if (arm_el_is_aa64(env, 1)) {
         t0sz = MIN(t0sz, 39);
         t0sz = MAX(t0sz, 16);
     }
-    uint32_t t1sz = extract32(env->cp15.c2_control, 16, 6);
+    uint32_t t1sz = extract32(tcr, 16, 6);
     if (arm_el_is_aa64(env, 1)) {
         t1sz = MIN(t1sz, 39);
         t1sz = MAX(t1sz, 16);
@@ -4717,10 +4739,10 @@ static int get_phys_addr_lpae(CPUARMState *env, target_ulong address,
         } else {
             ttbr = A32_BANKED_CURRENT_REG_GET(env, ttbr0);
         }
-        epd = extract32(env->cp15.c2_control, 7, 1);
+        epd = extract32(tcr, 7, 1);
         tsz = t0sz;
 
-        tg = extract32(env->cp15.c2_control, 14, 2);
+        tg = extract32(tcr, 14, 2);
         if (tg == 1) { /* 64KB pages */
             granule_sz = 13;
         }
@@ -4729,10 +4751,10 @@ static int get_phys_addr_lpae(CPUARMState *env, target_ulong address,
         }
     } else {
         ttbr = A32_BANKED_CURRENT_REG_GET(env, ttbr1);
-        epd = extract32(env->cp15.c2_control, 23, 1);
+        epd = extract32(tcr, 23, 1);
         tsz = t1sz;
 
-        tg = extract32(env->cp15.c2_control, 30, 2);
+        tg = extract32(tcr, 30, 2);
         if (tg == 3)  { /* 64KB pages */
             granule_sz = 13;
         }

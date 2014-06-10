@@ -221,7 +221,16 @@ typedef struct CPUARMState {
                 uint64_t ttbr1_el1;
             };
         };
-        uint64_t c2_control; /* MMU translation table base control.  */
+        union { /* MMU translation table base control. */
+            struct {
+                uint64_t ttbcr_ns;
+                uint64_t ttbcr_s;
+            };
+            struct {
+                uint64_t tcr_el1;
+                uint64_t tcr_el3;
+            };
+        };
         uint32_t c2_mask; /* MMU translation table base selection mask.  */
         uint32_t c2_base_mask; /* MMU translation table base 0 mask. */
         uint32_t c2_data; /* MPU data cachable bits.  */

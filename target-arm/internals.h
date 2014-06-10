@@ -155,7 +155,7 @@ static inline bool extended_addresses_enabled(CPUARMState *env)
 {
     return arm_el_is_aa64(env, 1)
         || ((arm_feature(env, ARM_FEATURE_LPAE)
-             && (env->cp15.c2_control & TTBCR_EAE)));
+             && (A32_BANKED_CURRENT_REG_GET(env, ttbcr) & TTBCR_EAE)));
 }
 
 /* Valid Syndrome Register EC field values */
