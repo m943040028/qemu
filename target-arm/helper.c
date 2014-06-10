@@ -2421,6 +2421,9 @@ static const ARMCPRegInfo v7_el3_cp_reginfo[] = {
       .access = PL3_RW | PL1_R, .resetvalue = 0, .secure = 0,
       .writefn = nsacr_write, .readfn = nsacr_read,
       .fieldoffset = offsetof(CPUARMState, cp15.c1_nsacr) },
+    { .name = "MVBAR", .cp = 15, .crn = 12, .crm = 0, .opc1 = 0, .opc2 = 1,
+      .access = PL3_RW, .writefn = vbar_write, .resetvalue = 0, .secure = 0,
+      .fieldoffset = offsetof(CPUARMState, cp15.mvbar) },
     REGINFO_SENTINEL
 };
 
@@ -4238,16 +4241,16 @@ void arm_cpu_do_interrupt(CPUState *cs)
         cpu_abort(cs, "Unhandled exception 0x%x\n", cs->exception_index);
         return; /* Never happens.  Keep compiler happy.  */
     }
-    /* High vectors.  */
-    if (env->cp15.c1_sys & SCTLR_V) {
-        /* when enabled, base address cannot be remapped.  */
+
+    if (new_mode == ARM_CPU_MODE_MON) {
+        addr += env->cp15.mvbar;
+    } else if (env->cp15.c1_sys & SCTLR_V) {
+        /* High vectors. When enabled, base address cannot be remapped. */
         addr += 0xffff0000;
     } else {
         /* ARM v7 architectures provide a vector base address register to remap
          * the interrupt vector table.
-         * This register is only followed in non-monitor mode, and has a secure
-         * and un-secure copy. Since the cpu is always in a un-secure operation
-         * and is never in monitor mode this feature is always active.
+         * This register is only followed in non-monitor mode, and is banked.
          * Note: only bits 31:5 are valid.
          */
         addr += env->cp15.vbar_el[1];
