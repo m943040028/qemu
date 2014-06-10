@@ -915,11 +915,11 @@ static const ARMCPRegInfo v7_cp_reginfo[] = {
       .access = PL1_RW, .type = ARM_CP_NO_MIGRATE,
       .fieldoffset = offsetof(CPUARMState, cp15.c9_pminten),
       .resetvalue = 0, .writefn = pmintenclr_write, },
-    { .name = "VBAR", .state = ARM_CP_STATE_BOTH,
-      .opc0 = 3, .crn = 12, .crm = 0, .opc1 = 0, .opc2 = 0,
-      .access = PL1_RW, .writefn = vbar_write,
-      .fieldoffset = offsetof(CPUARMState, cp15.vbar_el[1]),
-      .resetvalue = 0 },
+    { .name = "VBAR", 
+      .cp = 15, .crn = 12, .crm = 0, .opc1 = 0, .opc2 = 0,
+      .access = PL1_RW, .writefn = vbar_write, .resetvalue = 0,
+      .bank_fieldoffsets = { offsetof(CPUARMState, cp15.vbar_s),
+                             offsetof(CPUARMState, cp15.vbar_ns) } },
     { .name = "CCSIDR", .state = ARM_CP_STATE_BOTH,
       .opc0 = 3, .crn = 0, .crm = 0, .opc1 = 1, .opc2 = 0,
       .access = PL1_R, .readfn = ccsidr_read, .type = ARM_CP_NO_MIGRATE },
@@ -2312,6 +2312,11 @@ static const ARMCPRegInfo v8_cp_reginfo[] = {
       .opc0 = 3, .opc1 = 0, .crn = 4, .crm = 2, .opc2 = 0,
       .type = ARM_CP_NO_MIGRATE,
       .access = PL1_RW, .readfn = spsel_read, .writefn = spsel_write },
+    { .name = "VBAR_EL1", .state = ARM_CP_STATE_AA64,
+      .opc0 = 3, .opc1 = 0, .crn = 12, .crm = 0, .opc2 = 0,
+      .access = PL1_RW, .writefn = vbar_write,
+      .fieldoffset = offsetof(CPUARMState, cp15.vbar_el[1]),
+      .resetvalue = 0 },
     { .name = "CSSELR_EL1", .state = ARM_CP_STATE_AA64,
       .opc0 = 3, .crn = 0, .crm = 0, .opc1 = 2, .opc2 = 0,
       .access = PL1_RW, .writefn = csselr_write, .resetvalue = 0,
@@ -4318,7 +4323,7 @@ void arm_cpu_do_interrupt(CPUState *cs)
          * This register is only followed in non-monitor mode, and is banked.
          * Note: only bits 31:5 are valid.
          */
-        addr += env->cp15.vbar_el[1];
+        addr += A32_BANKED_CURRENT_REG_GET(env, vbar);
     }
 
     if ((env->uncached_cpsr & CPSR_M) == ARM_CPU_MODE_MON) {
