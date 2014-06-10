@@ -7871,15 +7871,27 @@ static void disas_arm_insn(CPUARMState * env, DisasContext *s)
         case 7:
         {
             int imm16 = extract32(insn, 0, 4) | (extract32(insn, 8, 12) << 4);
-            /* SMC instruction (op1 == 3)
-               and undefined instructions (op1 == 0 || op1 == 2)
-               will trap */
-            if (op1 != 1) {
+            if (op1 == 1) {
+                /* bkpt */
+                ARCH(5);
+                gen_exception_insn(s, 4, EXCP_BKPT,
+                        syn_aa32_bkpt(imm16, false));
+            } else if (op1 == 3) {
+                /* smi/smc */
+                if (!arm_dc_feature(s, ARM_FEATURE_EL3) ||
+                        s->current_pl == 0) {
+                    goto illegal_op;
+                }
+                gen_set_pc_im(s, s->pc);
+                tmp = tcg_const_i32(syn_aa32_smc());
+                gen_helper_pre_smc(cpu_env, tmp);
+                tcg_temp_free_i32(tmp);
+                gen_ss_advance(s);
+                gen_exception_insn(s, 0, EXCP_SMC, syn_aa32_smc());
+                break;
+            } else {
                 goto illegal_op;
             }
-            /* bkpt */
-            ARCH(5);
-            gen_exception_insn(s, 4, EXCP_BKPT, syn_aa32_bkpt(imm16, false));
             break;
         }
         case 0x8: /* signed multiply */
@@ -9710,9 +9722,16 @@ static int disas_thumb2_insn(CPUARMState *env, DisasContext *s, uint16_t insn_hw
 
                 if (insn & (1 << 26)) {
                     /* Secure monitor call (v6Z) */
-                    qemu_log_mask(LOG_UNIMP,
-                                  "arm: unimplemented secure monitor call\n");
-                    goto illegal_op; /* not implemented.  */
+                    if (!arm_dc_feature(s, ARM_FEATURE_EL3) ||
+                            s->current_pl == 0) {
+                        goto illegal_op;
+                    }
+                    gen_set_pc_im(s, s->pc);
+                    tmp = tcg_const_i32(syn_aa32_smc());
+                    gen_helper_pre_smc(cpu_env, tmp);
+                    tcg_temp_free_i32(tmp);
+                    gen_ss_advance(s);
+                    gen_exception_insn(s, 0, EXCP_SMC, syn_aa32_smc());
                 } else {
                     op = (insn >> 20) & 7;
                     switch (op) {
