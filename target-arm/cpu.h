@@ -752,6 +752,44 @@ static inline int arm_feature(CPUARMState *env, int feature)
     return (env->features & (1ULL << feature)) != 0;
 }
 
+
+/* Return true if exception level below EL3 is in secure state */
+static inline bool arm_is_secure_below_el3(CPUARMState *env)
+{
+#if !defined(CONFIG_USER_ONLY)
+    if (arm_feature(env, ARM_FEATURE_EL3)) {
+        return !(env->cp15.scr_el3 & SCR_NS);
+    } else if (arm_feature(env, ARM_FEATURE_EL2)) {
+        return false;
+    } else {
+        /* IMPDEF: QEMU defaults to non-secure */
+        return false;
+    }
+#else
+    return false;
+#endif
+}
+
+/* Return true if the processor is in secure state */
+static inline bool arm_is_secure(CPUARMState *env)
+{
+#if !defined(CONFIG_USER_ONLY)
+    if (arm_feature(env, ARM_FEATURE_EL3)) {
+        if (env->aarch64 && extract32(env->pstate, 2, 2) == 3) {
+            /* CPU currently in Aarch64 state and EL3 */
+            return true;
+        } else if (!env->aarch64 &&
+                (env->uncached_cpsr & CPSR_M) == ARM_CPU_MODE_MON) {
+            /* CPU currently in Aarch32 state and monitor mode */
+            return true;
+        }
+    }
+    return arm_is_secure_below_el3(env);
+#else
+    return false;
+#endif
+}
+
 /* Return true if the specified exception level is running in AArch64 state. */
 static inline bool arm_el_is_aa64(CPUARMState *env, int el)
 {
