@@ -806,6 +806,42 @@ static inline bool arm_el_is_aa64(CPUARMState *env, int el)
     return arm_feature(env, ARM_FEATURE_AARCH64);
 }
 
+/* Macro for determing whether to use the secure or non-secure bank of a CP
+ * register.  When EL3 is operating in Aarch32 state, the NS-bit determines
+ * whether the secure instance of a cp-register should be used.
+ */
+#define USE_SECURE_REG(_env) (                                   \
+                        arm_feature((_env), ARM_FEATURE_EL3) &&    \
+                        !arm_el_is_aa64((_env), 3) &&              \
+                        !((_env)->cp15.scr_el3 & SCR_NS))
+
+/* Macros for accessing a specified CP register bank */
+#define A32_BANKED_REG_GET(_env, _regname, _secure)    \
+    ((_secure) ? (_env)->cp15._regname##_s : (_env)->cp15._regname##_ns)
+
+#define A32_BANKED_REG_SET(_env, _regname, _secure, _val)   \
+    do {                                                \
+        if (_secure) {                                   \
+            (_env)->cp15._regname##_s = (_val);            \
+        } else {                                        \
+            (_env)->cp15._regname##_ns = (_val);           \
+        }                                               \
+    } while (0)
+
+/* Macros for automatically accessing a specific CP register bank depending on
+ * the current secure state of the system.  These macros are not intended for
+ * supporting instruction translation reads/writes as these are dependent
+ * solely on the SCR.NS bit and not the mode.
+ */
+#define A32_BANKED_CURRENT_REG_GET(_env, _regname)        \
+    A32_BANKED_REG_GET((_env), _regname,                \
+                       ((!arm_el_is_aa64((_env), 3) && arm_is_secure(_env))))
+
+#define A32_BANKED_CURRENT_REG_SET(_env, _regname, _val)                       \
+    A32_BANKED_REG_SET((_env), _regname,                                    \
+                       ((!arm_el_is_aa64((_env), 3) && arm_is_secure(_env))),  \
+                       (_val))
+
 void arm_cpu_list(FILE *f, fprintf_function cpu_fprintf);
 unsigned int arm_excp_target_el(CPUState *cs, unsigned int excp_idx);
 inline uint32_t arm_phys_excp_target_el(CPUState *cs, uint32_t excp_idx,
