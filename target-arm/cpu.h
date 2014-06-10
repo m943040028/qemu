@@ -1103,6 +1103,8 @@ struct ARMCPRegInfo {
     uint8_t opc0;
     uint8_t opc1;
     uint8_t opc2;
+    uint8_t secure;
+
     /* Execution state in which this register is visible: ARM_CP_STATE_* */
     int state;
     /* Register type: ARM_CP_* bits/values */
@@ -1118,12 +1120,22 @@ struct ARMCPRegInfo {
      * fieldoffset is non-zero, the reset value of the register.
      */
     uint64_t resetvalue;
-    /* Offset of the field in CPUARMState for this register. This is not
-     * needed if either:
+    /* Offsets of the fields (secure/non-secure) in CPUARMState for this
+     * register. The array will be accessed by the ns bit which means the
+     * secure instance has to be at [0] while the non-secure instance must be
+     * at [1]. If a register is not banked .fieldoffset can be used, which maps
+     * to the non-secure bank.
+     * This is not needed if either:
      *  1. type is ARM_CP_CONST or one of the ARM_CP_SPECIALs
      *  2. both readfn and writefn are specified
      */
-    ptrdiff_t fieldoffset; /* offsetof(CPUARMState, field) */
+    union { /* offsetof(CPUARMState, field) */
+        struct {
+            ptrdiff_t fieldoffset_padding;
+            ptrdiff_t fieldoffset;
+        };
+        ptrdiff_t bank_fieldoffsets[2];
+    };
     /* Function for making any access checks for this register in addition to
      * those specified by the 'access' permissions bits. If NULL, no extra
      * checks required. The access check is performed at runtime, not at

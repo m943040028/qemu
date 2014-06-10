@@ -3179,22 +3179,56 @@ static void add_cpreg_to_hashtable(ARMCPU *cpu, const ARMCPRegInfo *r,
     uint32_t *key = g_new(uint32_t, 1);
     ARMCPRegInfo *r2 = g_memdup(r, sizeof(ARMCPRegInfo));
     int is64 = (r->type & ARM_CP_64BIT) ? 1 : 0;
-    if (r->state == ARM_CP_STATE_BOTH && state == ARM_CP_STATE_AA32) {
-        /* The AArch32 view of a shared register sees the lower 32 bits
-         * of a 64 bit backing field. It is not migratable as the AArch64
-         * view handles that. AArch64 also handles reset.
-         * We assume it is a cp15 register if the .cp field is left unset.
-         */
-        if (r2->cp == 0) {
-            r2->cp = 15;
+
+    if (state == ARM_CP_STATE_AA32) {
+        if (r->bank_fieldoffsets[0] && r->bank_fieldoffsets[1]) {
+            /* Track whether this is a secure or nonsecure instance */
+            if (!r2->secure) {
+                r2->secure = !nsbit;
+            }
+
+            /* Register is banked (using both entries in array).
+             * Overwriting fieldoffset as the array was only used to define
+             * banked registers but later only fieldoffset is used.
+             */
+            r2->fieldoffset = r->bank_fieldoffsets[!r2->secure];
+
+            /* If V8 is enabled then we don't need to migrate or reset the
+             * AArch32 version of the banked registers as this will be handled
+             * through the AArch64 view.
+             * The exception to the above is cpregs with a crn of 13
+             * (specifically FCSEIDR and CONTEXTIDR) in which case there may
+             * not be an AArch64 equivalent for one or either bank so migration
+             * and reset must be preserved.
+             */
+            if (arm_feature(&cpu->env, ARM_FEATURE_V8) && r->crn != 13) {
+                r2->type |= ARM_CP_NO_MIGRATE;
+                r2->resetfn = arm_cp_reset_ignore;
+            }
+        } else if (!nsbit) {
+            /* The register is not banked so we only want to allow migration of
+             * the non-secure instance.
+             */
+            r2->type |= ARM_CP_NO_MIGRATE;
         }
-        r2->type |= ARM_CP_NO_MIGRATE;
-        r2->resetfn = arm_cp_reset_ignore;
+
+        if (r->state == ARM_CP_STATE_BOTH) {
+            /* The AArch32 view of a shared register sees the lower 32 bits
+             * of a 64 bit backing field. It is not migratable as the AArch64
+             * view handles that. AArch64 also handles reset.
+             * We assume it is a cp15 register if the .cp field is left unset.
+             */
+            if (r2->cp == 0) {
+                r2->cp = 15;
+            }
+            r2->type |= ARM_CP_NO_MIGRATE;
+            r2->resetfn = arm_cp_reset_ignore;
 #ifdef HOST_WORDS_BIGENDIAN
-        if (r2->fieldoffset) {
-            r2->fieldoffset += sizeof(uint32_t);
-        }
+            if (r2->fieldoffset) {
+                r2->fieldoffset += sizeof(uint32_t);
+            }
 #endif
+        }
     }
     if (state == ARM_CP_STATE_AA64) {
         /* To allow abbreviation of ARMCPRegInfo
