@@ -100,7 +100,7 @@ typedef uint32_t ARMReadCPFunc(void *opaque, int cp_info,
 
 struct arm_boot_info;
 
-#define NB_MMU_MODES 2
+#define NB_MMU_MODES 4
 
 /* We currently assume float and double are IEEE single and double
    precision respectively.
@@ -752,7 +752,6 @@ static inline int arm_feature(CPUARMState *env, int feature)
     return (env->features & (1ULL << feature)) != 0;
 }
 
-
 /* Return true if exception level below EL3 is in secure state */
 static inline bool arm_is_secure_below_el3(CPUARMState *env)
 {
@@ -793,11 +792,12 @@ static inline bool arm_is_secure(CPUARMState *env)
 /* Return true if the specified exception level is running in AArch64 state. */
 static inline bool arm_el_is_aa64(CPUARMState *env, int el)
 {
-    /* We don't currently support EL2 or EL3, and this isn't valid for EL0
+    /* We don't currently support EL2, and this isn't valid for EL0
      * (if we're in EL0, is_a64() is what you want, and if we're not in EL0
      * then the state of EL0 isn't well defined.)
      */
-    assert(el == 1);
+    assert(el == 1 || el == 3);
+
     /* AArch64-capable CPUs always run with EL1 in AArch64 mode. This
      * is a QEMU-imposed simplification which we may wish to change later.
      * If we in future support EL2 and/or EL3, then the state of lower
@@ -989,9 +989,12 @@ static inline int arm_current_pl(CPUARMState *env)
 
     if ((env->uncached_cpsr & 0x1f) == ARM_CPU_MODE_USR) {
         return 0;
+    } else if (arm_is_secure(env)) {
+        /* Secure PL1 and monitor mode are mapped to PL3 */
+        return 3;
     }
-    /* We don't currently implement the Virtualization or TrustZone
-     * extensions, so PL2 and PL3 don't exist for us.
+    /* We currently do not implement the Virtualization extensions, so PL2 does
+     * not exist for us.
      */
     return 1;
 }
