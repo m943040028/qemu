@@ -1120,7 +1120,7 @@ static void arm_cpu_class_init(ObjectClass *oc, void *data)
     cc->get_phys_page_debug = arm_cpu_get_phys_page_debug;
     cc->vmsd = &vmstate_arm_cpu;
 #endif
-    cc->gdb_num_core_regs = 26;
+    cc->gdb_num_core_regs = 27;
     cc->gdb_core_xml_file = "arm-core.xml";
     cc->debug_excp_handler = arm_debug_excp_handler;
 }

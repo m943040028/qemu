@@ -688,6 +688,8 @@ static inline void pstate_write(CPUARMState *env, uint32_t val)
 
 /* Return the current CPSR value.  */
 uint32_t cpsr_read(CPUARMState *env);
+/* Return the current SCR value.  */
+uint32_t scr_read(CPUARMState *env);
 /* Set the CPSR.  Note that some bits of mask must be all-set or all-clear.  */
 void cpsr_write(CPUARMState *env, uint32_t val, uint32_t mask);
 

@@ -2406,6 +2406,11 @@ static const ARMCPRegInfo v8_el2_cp_reginfo[] = {
     REGINFO_SENTINEL
 };
 
+uint32_t scr_read(CPUARMState *env)
+{
+    return env->cp15.scr_el3;
+}
+
 static void nsacr_write(CPUARMState *env, const ARMCPRegInfo *ri,
                       uint64_t value)
 {
