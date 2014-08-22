@@ -312,8 +312,26 @@ static uint32_t gic_dist_readb(void *opaque, hwaddr offset)
         if (offset < 0x08)
             return 0;
         if (offset >= 0x80) {
-            /* Interrupt Security , RAZ/WI */
-            return 0;
+            /* Interrupt Group Registers
+             *
+             * For GIC with Security Extn and Non-secure access RAZ/WI
+             * For GICv1 without Security Extn RAZ/WI
+             */
+            res = 0;
+            if (!(s->security_extn && ns_access()) &&
+                    ((s->revision == 1 && s->security_extn)
+                            || s->revision == 2)) {
+                irq = (offset - 0x080) * 8 + GIC_BASE_IRQ;
+                if (irq >= s->num_irq) {
+                    goto bad_reg;
+                }
+                for (i = 0; i < 8; i++) {
+                    if (!GIC_TEST_GROUP0(irq + i, cm)) {
+                        res |= (1 << i);
+                    }
+                }
+            }
+            return res;
         }
         goto bad_reg;
     } else if (offset < 0x200) {
@@ -457,7 +475,30 @@ static void gic_dist_writeb(void *opaque, hwaddr offset,
         } else if (offset < 4) {
             /* ignored.  */
         } else if (offset >= 0x80) {
-            /* Interrupt Security Registers, RAZ/WI */
+            /* Interrupt Group Registers
+             *
+             * For GIC with Security Extn and Non-secure access RAZ/WI
+             * For GICv1 without Security Extn RAZ/WI
+             */
+            if (!(s->security_extn && ns_access()) &&
+                    ((s->revision == 1 && s->security_extn)
+                            || s->revision == 2)) {
+                irq = (offset - 0x080) * 8 + GIC_BASE_IRQ;
+                if (irq >= s->num_irq) {
+                    goto bad_reg;
+                }
+                for (i = 0; i < 8; i++) {
+                    /* Group bits are banked for private interrupts (internal)*/
+                    int cm = (irq < GIC_INTERNAL) ? (1 << cpu) : ALL_CPU_MASK;
+                    if (value & (1 << i)) {
+                        /* Group1 (Non-secure) */
+                        GIC_SET_GROUP1(irq + i, cm);
+                    } else {
+                        /* Group0 (Secure) */
+                        GIC_SET_GROUP0(irq + i, cm);
+                    }
+                }
+            }
         } else {
             goto bad_reg;
         }

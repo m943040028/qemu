@@ -52,6 +52,7 @@ static const VMStateDescription vmstate_gic_irq_state = {
         VMSTATE_UINT8(level, gic_irq_state),
         VMSTATE_BOOL(model, gic_irq_state),
         VMSTATE_BOOL(edge_trigger, gic_irq_state),
+        VMSTATE_UINT8(group, gic_irq_state),
         VMSTATE_END_OF_LIST()
     }
 };
