@@ -45,6 +45,13 @@ static inline int gic_get_current_cpu(GICState *s)
     return 0;
 }
 
+/* Security state of a read / write access */
+static inline bool ns_access(void)
+{
+    /* TODO: use actual security state */
+    return true;
+}
+
 /* TODO: Many places that call this routine could be optimized.  */
 /* Update interrupt status after enabled or pending bits have been changed.  */
 void gic_update(GICState *s)
