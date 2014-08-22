@@ -190,10 +190,34 @@ uint32_t gic_acknowledge_irq(GICState *s, int cpu)
     int ret, irq, src;
     int cm = 1 << cpu;
     irq = s->current_pending[cpu];
+    bool isGrp0;
     if (irq == 1023
             || GIC_GET_PRIORITY(irq, cpu) >= s->running_priority[cpu]) {
         DPRINTF("ACK no pending IRQ\n");
         return 1023;
+    }
+
+    if (s->revision >= 2 || s->security_extn) {
+        isGrp0 = GIC_TEST_GROUP0(irq, (1 << cpu));
+        if ((isGrp0 && (!s->enabled_grp[0]
+                    || !(s->cpu_control[cpu][0] & GICC_CTLR_S_EN_GRP0)))
+           || (!isGrp0 && (!s->enabled_grp[1]
+                    || !(s->cpu_control[cpu][1] & GICC_CTLR_NS_EN_GRP1)))) {
+            return 1023;
+        }
+
+        if ((s->revision >= 2 && !s->security_extn)
+                || (s->security_extn && !ns_access())) {
+            if (!isGrp0 && !(s->cpu_control[cpu][0] & GICC_CTLR_S_ACK_CTL)) {
+                DPRINTF("Read of IAR ignored for Group1 interrupt %d "
+                        "(AckCtl disabled)\n", irq);
+                return 1022;
+            }
+        } else if (s->security_extn && ns_access() && isGrp0) {
+            DPRINTF("Non-secure read of IAR ignored for Group0 interrupt %d\n",
+                    irq);
+            return 1023;
+        }
     }
     s->last_active[irq][cpu] = s->running_irq[cpu];
 
