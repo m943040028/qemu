@@ -379,8 +379,8 @@ static void kvm_arm_gic_put(GICState *s)
      */
 
     for (cpu = 0; cpu < s->num_cpu; cpu++) {
-        /* s->cpu_enabled[cpu] -> GICC_CTLR */
-        reg = s->cpu_enabled[cpu];
+        /* s->cpu_enabled[cpu][0] -> GICC_CTLR */
+        reg = s->cpu_control[cpu];
         kvm_gicc_access(s, 0x00, cpu, &reg, true);
 
         /* s->priority_mask[cpu] -> GICC_PMR */
@@ -478,9 +478,9 @@ static void kvm_arm_gic_get(GICState *s)
      */
 
     for (cpu = 0; cpu < s->num_cpu; cpu++) {
-        /* GICC_CTLR -> s->cpu_enabled[cpu] */
+        /* GICC_CTLR -> s->cpu_control[cpu][0] */
         kvm_gicc_access(s, 0x00, cpu, &reg, false);
-        s->cpu_enabled[cpu] = (reg & 1);
+        s->cpu_control[cpu][0] = reg;
 
         /* GICC_PMR -> s->priority_mask[cpu] */
         kvm_gicc_access(s, 0x04, cpu, &reg, false);

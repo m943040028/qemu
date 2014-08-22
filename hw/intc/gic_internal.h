@@ -54,6 +54,17 @@
 #define GIC_SET_GROUP1(irq, cm) (s->irq_state[irq].group &= ~(cm))
 #define GIC_TEST_GROUP0(irq, cm) ((s->irq_state[irq].group & (cm)) == 0)
 
+#define GICC_CTLR_S_EN_GRP0   (1U << 0)
+#define GICC_CTLR_S_EN_GRP1   (1U << 1)
+#define GICC_CTLR_S_ACK_CTL       (1U << 2)
+#define GICC_CTLR_S_FIQ_EN        (1U << 3)
+#define GICC_CTLR_S_CBPR          (1U << 4) /* GICv1: SBPR */
+
+#define GICC_CTLR_S_MASK          0x7ff
+
+#define GICC_CTLR_NS_EN_GRP1  (1U << 0)
+#define GICC_CTLR_NS_MASK         (1 | 3 << 5 | 1 << 9)
+
 
 /* The special cases for the revision property: */
 #define REV_11MPCORE 0
@@ -65,6 +76,9 @@ void gic_complete_irq(GICState *s, int cpu, int irq);
 void gic_update(GICState *s);
 void gic_init_irqs_and_distributor(GICState *s, int num_irq);
 void gic_set_priority(GICState *s, int cpu, int irq, uint8_t val);
+uint32_t gic_get_cpu_control(GICState *s, int cpu);
+void gic_set_cpu_control(GICState *s, int cpu, uint32_t value);
+
 
 static inline bool gic_test_pending(GICState *s, int irq, int cm)
 {

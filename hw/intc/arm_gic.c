@@ -66,7 +66,7 @@ void gic_update(GICState *s)
     for (cpu = 0; cpu < NUM_CPU(s); cpu++) {
         cm = 1 << cpu;
         s->current_pending[cpu] = 1023;
-        if (!s->enabled || !s->cpu_enabled[cpu]) {
+        if (!s->enabled || !(s->cpu_control[cpu][0] & 1)) {
             qemu_irq_lower(s->parent_irq[cpu]);
             return;
         }
@@ -237,6 +237,52 @@ void gic_set_priority(GICState *s, int cpu, int irq, uint8_t val)
         s->priority1[irq][cpu] = val;
     } else {
         s->priority2[(irq) - GIC_INTERNAL] = val;
+    }
+}
+
+uint32_t gic_get_cpu_control(GICState *s, int cpu)
+{
+    if ((s->revision >= 2 && !s->security_extn)
+            || (s->security_extn && !ns_access())) {
+        return s->cpu_control[cpu][0];
+    } else if (s->security_extn && ns_access()) {
+        return s->cpu_control[cpu][1];
+    } else {
+        return s->cpu_control[cpu][0];
+    }
+}
+
+void gic_set_cpu_control(GICState *s, int cpu, uint32_t value)
+{
+    /* CPU Interface Control is banked for GICv2 and GICv1 with Security Extn */
+    if ((s->revision >= 2 && !s->security_extn)
+            || (s->security_extn && !ns_access())) {
+        /* Write to Secure instance of the register */
+        s->cpu_control[cpu][0] = (value & GICC_CTLR_S_MASK);
+        /* Synchronize EnableGrp1 alias of Non-secure copy */
+        s->cpu_control[cpu][1] &= ~GICC_CTLR_NS_EN_GRP1;
+        s->cpu_control[cpu][1] |= (value & GICC_CTLR_S_EN_GRP1) ?
+                GICC_CTLR_NS_EN_GRP1 : 0;
+
+        DPRINTF("CPU Interface %d: Group0 Interrupts %sabled, "
+                "Group1 Interrupts %sabled\n", cpu,
+                (s->cpu_control[cpu][0] & GICC_CTLR_S_EN_GRP0) ? "En" : "Dis",
+                (s->cpu_control[cpu][0] & GICC_CTLR_S_EN_GRP1) ? "En" : "Dis");
+    } else if (s->security_extn && ns_access()) {
+        /* Write to Non-secure instance of the register */
+        s->cpu_control[cpu][1] = (value & GICC_CTLR_NS_MASK);
+        /* Synchronize EnableGrp1 alias of Secure copy */
+        s->cpu_control[cpu][0] &= ~GICC_CTLR_S_EN_GRP1;
+        s->cpu_control[cpu][0] |= (value & GICC_CTLR_NS_EN_GRP1) ?
+                GICC_CTLR_S_EN_GRP1 : 0;
+
+        DPRINTF("CPU Interface %d: Group1 Interrupts %sabled\n", cpu,
+                (s->cpu_control[cpu][1] & GICC_CTLR_NS_EN_GRP1) ? "En" : "Dis");
+    } else {
+        s->cpu_control[cpu][0] = (value & 1);
+
+        DPRINTF("CPU Interface %d %sabled\n", cpu,
+                s->cpu_control[cpu][0] ? "En" : "Dis");
     }
 }
 
@@ -745,7 +791,7 @@ static uint32_t gic_cpu_read(GICState *s, int cpu, int offset)
 {
     switch (offset) {
     case 0x00: /* Control */
-        return s->cpu_enabled[cpu];
+        return gic_get_cpu_control(s, cpu);
     case 0x04: /* Priority mask */
         return s->priority_mask[cpu];
     case 0x08: /* Binary Point */
@@ -771,9 +817,7 @@ static void gic_cpu_write(GICState *s, int cpu, int offset, uint32_t value)
 {
     switch (offset) {
     case 0x00: /* Control */
-        s->cpu_enabled[cpu] = (value & 1);
-        DPRINTF("CPU %d %sabled\n", cpu, s->cpu_enabled[cpu] ? "En" : "Dis");
-        break;
+        return gic_set_cpu_control(s, cpu, value);
     case 0x04: /* Priority mask */
         s->priority_mask[cpu] = (value & 0xff);
         break;

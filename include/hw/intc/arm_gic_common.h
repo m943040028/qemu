@@ -58,7 +58,7 @@ typedef struct GICState {
         uint8_t enabled;
         uint8_t enabled_grp[GIC_NR_GROUP]; /* EnableGrp0 and EnableGrp1 */
     };
-    bool cpu_enabled[GIC_NCPU];
+    uint32_t cpu_control[GIC_NCPU][GIC_NR_GROUP];
 
     gic_irq_state irq_state[GIC_MAXIRQ];
     uint8_t irq_target[GIC_MAXIRQ];
