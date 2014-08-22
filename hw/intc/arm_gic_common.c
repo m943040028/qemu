@@ -149,6 +149,7 @@ static Property arm_gic_common_properties[] = {
      * (Internally, 0xffffffff also indicates "not a GIC but an NVIC".)
      */
     DEFINE_PROP_UINT32("revision", GICState, revision, 1),
+    DEFINE_PROP_UINT8("security-extn", GICState, security_extn, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
 
