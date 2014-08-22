@@ -52,6 +52,87 @@ static inline bool ns_access(void)
     return true;
 }
 
+inline void gic_update_with_grouping(GICState *s)
+{
+    int best_irq;
+    int best_prio;
+    int irq;
+    int irq_level;
+    int fiq_level;
+    int cpu;
+    int cm;
+    bool next_int;
+    bool next_grp0;
+    bool gicc_grp0_enabled;
+    bool gicc_grp1_enabled;
+
+    for (cpu = 0; cpu < NUM_CPU(s); cpu++) {
+        cm = 1 << cpu;
+        gicc_grp0_enabled = s->cpu_control[cpu][0] & GICC_CTLR_S_EN_GRP0;
+        gicc_grp1_enabled = s->cpu_control[cpu][1] & GICC_CTLR_S_EN_GRP1;
+        next_int = 0;
+        next_grp0 = 0;
+
+        s->current_pending[cpu] = 1023;
+        if ((!s->enabled_grp[0] && !s->enabled_grp[1])
+                || (!gicc_grp0_enabled && !gicc_grp1_enabled)) {
+            qemu_irq_lower(s->parent_irq[cpu]);
+            qemu_irq_lower(s->parent_fiq[cpu]);
+            return;
+        }
+
+        /* Determine highest priority pending interrupt */
+        best_prio = 0x100;
+        best_irq = 1023;
+        for (irq = 0; irq < s->num_irq; irq++) {
+            if (GIC_TEST_ENABLED(irq, cm) && gic_test_pending(s, irq, cm)) {
+                if (GIC_GET_PRIORITY(irq, cpu) < best_prio) {
+                    best_prio = GIC_GET_PRIORITY(irq, cpu);
+                    best_irq = irq;
+                }
+            }
+        }
+
+        /* Priority of IRQ higher than priority mask? */
+        if (best_prio < s->priority_mask[cpu]) {
+            s->current_pending[cpu] = best_irq;
+            if (GIC_TEST_GROUP0(best_irq, cm) && s->enabled_grp[0]) {
+                /* TODO: Add subpriority handling (binary point register) */
+                if (best_prio < s->running_priority[cpu]) {
+                    next_int = true;
+                    next_grp0 = true;
+                }
+            } else if (!GIC_TEST_GROUP0(best_irq, cm) && s->enabled_grp[1]) {
+                /* TODO: Add subpriority handling (binary point register) */
+                if (best_prio < s->running_priority[cpu]) {
+                    next_int = true;
+                    next_grp0 = false;
+                }
+            }
+        }
+
+        fiq_level = 0;
+        irq_level = 0;
+        if (next_int) {
+            if (next_grp0 && (s->cpu_control[cpu][0] & GICC_CTLR_S_FIQ_EN)) {
+                if (gicc_grp0_enabled) {
+                    fiq_level = 1;
+                    DPRINTF("Raised pending FIQ %d (cpu %d)\n", best_irq, cpu);
+                }
+            } else {
+                if ((next_grp0 && gicc_grp0_enabled)
+                     || (!next_grp0 && gicc_grp1_enabled)) {
+                    irq_level = 1;
+                    DPRINTF("Raised pending IRQ %d (cpu %d)\n", best_irq, cpu);
+                }
+            }
+        }
+        /* Set IRQ/FIQ signal */
+        qemu_set_irq(s->parent_irq[cpu], irq_level);
+        qemu_set_irq(s->parent_fiq[cpu], fiq_level);
+    }
+}
+
 inline void gic_update_no_grouping(GICState *s)
 {
     int best_irq;
@@ -95,7 +176,11 @@ inline void gic_update_no_grouping(GICState *s)
 /* Update interrupt status after enabled or pending bits have been changed.  */
 void gic_update(GICState *s)
 {
-    gic_update_no_grouping(s);
+    if (s->revision >= 2 || s->security_extn) {
+        gic_update_with_grouping(s);
+    } else {
+        gic_update_no_grouping(s);
+    }
 }
 
 void gic_set_pending_private(GICState *s, int cpu, int irq)
