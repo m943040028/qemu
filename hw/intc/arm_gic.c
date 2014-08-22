@@ -789,6 +789,9 @@ void gic_init_irqs_and_distributor(GICState *s, int num_irq)
     for (i = 0; i < NUM_CPU(s); i++) {
         sysbus_init_irq(sbd, &s->parent_irq[i]);
     }
+    for (i = 0; i < NUM_CPU(s); i++) {
+        sysbus_init_irq(sbd, &s->parent_fiq[i]);
+    }
     memory_region_init_io(&s->iomem, OBJECT(s), &gic_dist_ops, s,
                           "gic_dist", 0x1000);
 }
