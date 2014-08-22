@@ -257,11 +257,66 @@ uint32_t gic_acknowledge_irq(GICState *s, int cpu)
 
 void gic_set_priority(GICState *s, int cpu, int irq, uint8_t val)
 {
-    if (irq < GIC_INTERNAL) {
-        s->priority1[irq][cpu] = val;
-    } else {
-        s->priority2[(irq) - GIC_INTERNAL] = val;
+    uint8_t prio = val;
+
+    if (s->security_extn && ns_access()) {
+        if (GIC_TEST_GROUP0(irq, (1 << cpu))) {
+            return; /* Ignore Non-secure access of Group0 IRQ */
+        }
+        prio = 0x80 | (prio >> 1); /* Non-secure view */
     }
+
+    if (irq < GIC_INTERNAL) {
+        s->priority1[irq][cpu] = prio;
+    } else {
+        s->priority2[(irq) - GIC_INTERNAL] = prio;
+    }
+}
+
+uint32_t gic_get_priority(GICState *s, int cpu, int irq)
+{
+    uint32_t prio = GIC_GET_PRIORITY(irq, cpu);
+
+    if (s->security_extn && ns_access()) {
+        if (GIC_TEST_GROUP0(irq, (1 << cpu))) {
+            return 0; /* Non-secure access cannot read priority of Group0 IRQ */
+        }
+        prio = (prio << 1); /* Non-secure view */
+    }
+    return prio;
+}
+
+void gic_set_priority_mask(GICState *s, int cpu, uint8_t val)
+{
+    uint8_t pmask = (val & 0xff);
+
+    if (s->security_extn && ns_access()) {
+        if (s->priority_mask[cpu] & 0x80) {
+            /* Priority Mask in upper half */
+            pmask = 0x80 | (pmask >> 1);
+        } else {
+            /* Non-secure write ignored if priority mask is in lower half */
+            return;
+        }
+    }
+    s->priority_mask[cpu] = pmask;
+}
+
+uint32_t gic_get_priority_mask(GICState *s, int cpu)
+{
+    uint32_t pmask = s->priority_mask[cpu];
+
+    if (s->security_extn && ns_access()) {
+        if (pmask & 0x80) {
+            /* Priority Mask in upper half, return Non-secure view */
+            pmask = (pmask << 1);
+        } else {
+            /* Priority Mask in lower half, RAZ */
+            pmask = 0;
+        }
+    }
+    return pmask;
+
 }
 
 uint32_t gic_get_cpu_control(GICState *s, int cpu)
@@ -519,7 +574,7 @@ static uint32_t gic_dist_readb(void *opaque, hwaddr offset)
         irq = (offset - 0x400) + GIC_BASE_IRQ;
         if (irq >= s->num_irq)
             goto bad_reg;
-        res = GIC_GET_PRIORITY(irq, cpu);
+        res = gic_get_priority(s, cpu, irq);
     } else if (offset < 0xc00) {
         /* Interrupt CPU Target.  */
         if (s->num_cpu == 1 && s->revision != REV_11MPCORE) {
@@ -874,7 +929,7 @@ static uint32_t gic_cpu_read(GICState *s, int cpu, int offset)
     case 0x00: /* Control */
         return gic_get_cpu_control(s, cpu);
     case 0x04: /* Priority mask */
-        return s->priority_mask[cpu];
+        return gic_get_priority_mask(s, cpu);
     case 0x08: /* Binary Point */
         if (s->security_extn && ns_access()) {
             /* BPR is banked. Non-secure copy stored in ABPR. */
@@ -912,8 +967,7 @@ static void gic_cpu_write(GICState *s, int cpu, int offset, uint32_t value)
     case 0x00: /* Control */
         return gic_set_cpu_control(s, cpu, value);
     case 0x04: /* Priority mask */
-        s->priority_mask[cpu] = (value & 0xff);
-        break;
+        return gic_set_priority_mask(s, cpu, value);
     case 0x08: /* Binary Point */
         if (s->security_extn && ns_access()) {
             /* BPR is banked. Non-secure copy stored in ABPR. */
