@@ -301,6 +301,33 @@ uint8_t gic_get_running_priority(GICState *s, int cpu)
     }
 }
 
+uint16_t gic_get_current_pending_irq(GICState *s, int cpu)
+{
+    bool isGrp0;
+    uint16_t pendingId = s->current_pending[cpu];
+
+    if (pendingId < GIC_MAXIRQ && (s->revision >= 2 || s->security_extn)) {
+        isGrp0 = GIC_TEST_GROUP0(pendingId, (1 << cpu));
+        if ((isGrp0 && !s->enabled_grp[0])
+                || (!isGrp0 && !s->enabled_grp[1])) {
+            return 1023;
+        }
+        if (s->security_extn) {
+            if (isGrp0 && ns_access()) {
+                /* Group0 interrupts hidden from Non-secure access */
+                return 1023;
+            }
+            if (!isGrp0 && !ns_access()
+                    && !(s->cpu_control[cpu][0] & GICC_CTLR_S_ACK_CTL)) {
+                /* Group1 interrupts only seen by Secure access if
+                 * AckCtl bit set. */
+                return 1022;
+            }
+        }
+    }
+    return pendingId;
+}
+
 void gic_complete_irq(GICState *s, int cpu, int irq)
 {
     int update = 0;
@@ -821,7 +848,7 @@ static uint32_t gic_cpu_read(GICState *s, int cpu, int offset)
     case 0x14: /* Running Priority */
         return gic_get_running_priority(s, cpu);
     case 0x18: /* Highest Pending Interrupt */
-        return s->current_pending[cpu];
+        return gic_get_current_pending_irq(s, cpu);
     case 0x1c: /* Aliased Binary Point */
         if ((s->security_extn && ns_access())) {
             /* If Security Extensions are present ABPR is a secure register,
