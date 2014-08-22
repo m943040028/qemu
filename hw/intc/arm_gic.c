@@ -302,8 +302,18 @@ static uint32_t gic_dist_readb(void *opaque, hwaddr offset)
     cpu = gic_get_current_cpu(s);
     cm = 1 << cpu;
     if (offset < 0x100) {
-        if (offset == 0)
-            return s->enabled;
+        if (offset == 0) {
+            res = 0;
+            if ((s->revision == 2 && !s->security_extn)
+                    || (s->security_extn && !ns_access())) {
+                res = (s->enabled_grp[1] << 1) | s->enabled_grp[0];
+            } else if (s->security_extn && ns_access()) {
+                res = s->enabled_grp[1];
+            } else {
+                /* Neither GICv2 nor Security Extensions present */
+                res = s->enabled;
+            }
+        }
         if (offset == 4)
             /* Interrupt Controller Type Register */
             return ((s->num_irq / 32) - 1)
@@ -470,8 +480,24 @@ static void gic_dist_writeb(void *opaque, hwaddr offset,
     cpu = gic_get_current_cpu(s);
     if (offset < 0x100) {
         if (offset == 0) {
-            s->enabled = (value & 1);
-            DPRINTF("Distribution %sabled\n", s->enabled ? "En" : "Dis");
+            if ((s->revision == 2 && !s->security_extn)
+                    || (s->security_extn && !ns_access())) {
+                s->enabled_grp[0] = value & (1U << 0); /* EnableGrp0 */
+                /* For a GICv1 with Security Extn "EnableGrp1" is IMPDEF. */
+                s->enabled_grp[1] = value & (1U << 1); /* EnableGrp1 */
+                DPRINTF("Group0 distribution %sabled\n"
+                        "Group1 distribution %sabled\n",
+                                        s->enabled_grp[0] ? "En" : "Dis",
+                                        s->enabled_grp[1] ? "En" : "Dis");
+            } else if (s->security_extn && ns_access()) {
+                s->enabled_grp[1] = (value & 1U);
+                DPRINTF("Group1 distribution %sabled\n",
+                        s->enabled_grp[1] ? "En" : "Dis");
+            } else {
+                /* Neither GICv2 nor Security Extensions present */
+                s->enabled = (value & 1U);
+                DPRINTF("Distribution %sabled\n", s->enabled ? "En" : "Dis");
+            }
         } else if (offset < 4) {
             /* ignored.  */
         } else if (offset >= 0x80) {

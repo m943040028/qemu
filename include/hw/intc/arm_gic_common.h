@@ -30,6 +30,8 @@
 #define GIC_NR_SGIS 16
 /* Maximum number of possible CPU interfaces, determined by GIC architecture */
 #define GIC_NCPU 8
+/* Number of Groups (Group0 [Secure], Group1 [Non-secure]) */
+#define GIC_NR_GROUP 2
 
 #define MAX_NR_GROUP_PRIO 128
 #define GIC_NR_APRS (MAX_NR_GROUP_PRIO / 32)
@@ -52,7 +54,10 @@ typedef struct GICState {
 
     qemu_irq parent_irq[GIC_NCPU];
     qemu_irq parent_fiq[GIC_NCPU];
-    bool enabled;
+    union {
+        uint8_t enabled;
+        uint8_t enabled_grp[GIC_NR_GROUP]; /* EnableGrp0 and EnableGrp1 */
+    };
     bool cpu_enabled[GIC_NCPU];
 
     gic_irq_state irq_state[GIC_MAXIRQ];
