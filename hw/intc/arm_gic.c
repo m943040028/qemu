@@ -286,6 +286,21 @@ void gic_set_cpu_control(GICState *s, int cpu, uint32_t value)
     }
 }
 
+uint8_t gic_get_running_priority(GICState *s, int cpu)
+{
+    if (s->security_extn && ns_access()) {
+        if (s->running_priority[cpu] & 0x80) {
+            /* Running priority in upper half, return Non-secure view */
+            return s->running_priority[cpu] << 1;
+        } else {
+            /* Running priority in lower half, RAZ */
+            return 0;
+        }
+    } else {
+        return s->running_priority[cpu];
+    }
+}
+
 void gic_complete_irq(GICState *s, int cpu, int irq)
 {
     int update = 0;
@@ -804,7 +819,7 @@ static uint32_t gic_cpu_read(GICState *s, int cpu, int offset)
     case 0x0c: /* Acknowledge */
         return gic_acknowledge_irq(s, cpu);
     case 0x14: /* Running Priority */
-        return s->running_priority[cpu];
+        return gic_get_running_priority(s, cpu);
     case 0x18: /* Highest Pending Interrupt */
         return s->current_pending[cpu];
     case 0x1c: /* Aliased Binary Point */

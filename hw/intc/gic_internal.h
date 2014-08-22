@@ -78,6 +78,7 @@ void gic_init_irqs_and_distributor(GICState *s, int num_irq);
 void gic_set_priority(GICState *s, int cpu, int irq, uint8_t val);
 uint32_t gic_get_cpu_control(GICState *s, int cpu);
 void gic_set_cpu_control(GICState *s, int cpu, uint32_t value);
+uint8_t gic_get_running_priority(GICState *s, int cpu);
 
 
 static inline bool gic_test_pending(GICState *s, int irq, int cm)
