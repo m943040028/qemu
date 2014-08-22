@@ -356,6 +356,21 @@ void gic_complete_irq(GICState *s, int cpu, int irq)
             GIC_SET_PENDING(irq, cm);
             update = 1;
         }
+    } else if ((s->revision >= 2 && !s->security_extn)
+                 || (s->security_extn && !ns_access())) {
+        /* Handle GICv2 without Security Extensions or GIC with Security
+         * Extensions and a secure write.
+         */
+        if (!GIC_TEST_GROUP0(irq, cm)
+                && !(s->cpu_control[cpu][0] & GICC_CTLR_S_ACK_CTL)) {
+            /* Unpredictable. We choose to ignore. */
+            DPRINTF("EOI for Group1 interrupt %d ignored "
+                    "(AckCtl disabled)\n", irq);
+            return;
+        }
+    } else if (s->security_extn && ns_access() && GIC_TEST_GROUP0(irq, cm)) {
+        DPRINTF("Non-secure EOI for Group0 interrupt %d ignored\n", irq);
+        return;
     }
 
     if (irq != s->running_irq[cpu]) {
