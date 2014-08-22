@@ -73,6 +73,7 @@
 void gic_set_pending_private(GICState *s, int cpu, int irq);
 uint32_t gic_acknowledge_irq(GICState *s, int cpu);
 void gic_complete_irq(GICState *s, int cpu, int irq);
+inline void gic_update_no_grouping(GICState *s);
 void gic_update(GICState *s);
 void gic_init_irqs_and_distributor(GICState *s, int num_irq);
 void gic_set_priority(GICState *s, int cpu, int irq, uint8_t val);

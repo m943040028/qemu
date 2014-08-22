@@ -52,9 +52,7 @@ static inline bool ns_access(void)
     return true;
 }
 
-/* TODO: Many places that call this routine could be optimized.  */
-/* Update interrupt status after enabled or pending bits have been changed.  */
-void gic_update(GICState *s)
+inline void gic_update_no_grouping(GICState *s)
 {
     int best_irq;
     int best_prio;
@@ -91,6 +89,13 @@ void gic_update(GICState *s)
         }
         qemu_set_irq(s->parent_irq[cpu], level);
     }
+}
+
+/* TODO: Many places that call this routine could be optimized.  */
+/* Update interrupt status after enabled or pending bits have been changed.  */
+void gic_update(GICState *s)
+{
+    gic_update_no_grouping(s);
 }
 
 void gic_set_pending_private(GICState *s, int cpu, int irq)
