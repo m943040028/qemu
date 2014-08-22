@@ -78,9 +78,11 @@ typedef struct GICState {
     uint16_t running_priority[GIC_NCPU];
     uint16_t current_pending[GIC_NCPU];
 
-    /* We present the GICv2 without security extensions to a guest and
-     * therefore the guest can configure the GICC_CTLR to configure group 1
-     * binary point in the abpr.
+    /* If we present the GICv2 without security extensions to a guest,
+     * the guest can configure the GICC_CTLR to configure group 1 binary point
+     * in the abpr.
+     * For a GIC with Security Extensions we use use bpr for the
+     * secure copy and abpr as storage for the non-secure copy of the register.
      */
     uint8_t  bpr[GIC_NCPU];
     uint8_t  abpr[GIC_NCPU];

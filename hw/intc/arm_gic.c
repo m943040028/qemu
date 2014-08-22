@@ -795,7 +795,12 @@ static uint32_t gic_cpu_read(GICState *s, int cpu, int offset)
     case 0x04: /* Priority mask */
         return s->priority_mask[cpu];
     case 0x08: /* Binary Point */
-        return s->bpr[cpu];
+        if (s->security_extn && ns_access()) {
+            /* BPR is banked. Non-secure copy stored in ABPR. */
+            return s->abpr[cpu];
+        } else {
+            return s->bpr[cpu];
+        }
     case 0x0c: /* Acknowledge */
         return gic_acknowledge_irq(s, cpu);
     case 0x14: /* Running Priority */
@@ -803,7 +808,14 @@ static uint32_t gic_cpu_read(GICState *s, int cpu, int offset)
     case 0x18: /* Highest Pending Interrupt */
         return s->current_pending[cpu];
     case 0x1c: /* Aliased Binary Point */
-        return s->abpr[cpu];
+        if ((s->security_extn && ns_access())) {
+            /* If Security Extensions are present ABPR is a secure register,
+             * only accessible from secure state.
+             */
+            return 0;
+        } else {
+            return s->abpr[cpu];
+        }
     case 0xd0: case 0xd4: case 0xd8: case 0xdc:
         return s->apr[(offset - 0xd0) / 4][cpu];
     default:
@@ -822,12 +834,17 @@ static void gic_cpu_write(GICState *s, int cpu, int offset, uint32_t value)
         s->priority_mask[cpu] = (value & 0xff);
         break;
     case 0x08: /* Binary Point */
-        s->bpr[cpu] = (value & 0x7);
+        if (s->security_extn && ns_access()) {
+            /* BPR is banked. Non-secure copy stored in ABPR. */
+            s->abpr[cpu] = (value & 0x7);
+        } else {
+            s->bpr[cpu] = (value & 0x7);
+        }
         break;
     case 0x10: /* End Of Interrupt */
         return gic_complete_irq(s, cpu, value & 0x3ff);
     case 0x1c: /* Aliased Binary Point */
-        if (s->revision >= 2) {
+        if (s->revision >= 2 && !(s->security_extn && ns_access())) {
             s->abpr[cpu] = (value & 0x7);
         }
         break;
