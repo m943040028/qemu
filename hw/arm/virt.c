@@ -64,7 +64,8 @@ enum {
     VIRT_CPUPERIPHS,
     VIRT_GIC_DIST,
     VIRT_GIC_CPU,
-    VIRT_UART,
+    VIRT_UART0,
+    VIRT_UART1,
     VIRT_MMIO,
     VIRT_RTC,
 };
@@ -104,8 +105,9 @@ static const MemMapEntry a15memmap[] = {
     /* GIC distributor and CPU interfaces sit inside the CPU peripheral space */
     [VIRT_GIC_DIST] =   { 0x08000000, 0x00010000 },
     [VIRT_GIC_CPU] =    { 0x08010000, 0x00010000 },
-    [VIRT_UART] =       { 0x09000000, 0x00001000 },
-    [VIRT_RTC] =        { 0x09010000, 0x00001000 },
+    [VIRT_UART0] =      { 0x09000000, 0x00001000 },
+    [VIRT_UART1] =      { 0x09010000, 0x00001000 },
+    [VIRT_RTC] =        { 0x09020000, 0x00001000 },
     [VIRT_MMIO] =       { 0x0a000000, 0x00000200 },
     /* ...repeating for a total of NUM_VIRTIO_TRANSPORTS, each of that size */
     /* 0x10000000 .. 0x40000000 reserved for PCI */
@@ -113,8 +115,9 @@ static const MemMapEntry a15memmap[] = {
 };
 
 static const int a15irqmap[] = {
-    [VIRT_UART] = 1,
-    [VIRT_RTC] = 2,
+    [VIRT_UART0] = 1,
+    [VIRT_UART1] = 2,
+    [VIRT_RTC] = 3,
     [VIRT_MMIO] = 16, /* ...to 16 + NUM_VIRTIO_TRANSPORTS - 1 */
 };
 
@@ -352,12 +355,12 @@ static void create_gic(const VirtBoardInfo *vbi, qemu_irq *pic)
     fdt_add_gic_node(vbi);
 }
 
-static void create_uart(const VirtBoardInfo *vbi, qemu_irq *pic)
+static void create_uart(const VirtBoardInfo *vbi, qemu_irq *pic, int uart)
 {
     char *nodename;
-    hwaddr base = vbi->memmap[VIRT_UART].base;
-    hwaddr size = vbi->memmap[VIRT_UART].size;
-    int irq = vbi->irqmap[VIRT_UART];
+    hwaddr base = vbi->memmap[uart].base;
+    hwaddr size = vbi->memmap[uart].size;
+    int irq = vbi->irqmap[uart];
     const char compat[] = "arm,pl011\0arm,primecell";
     const char clocknames[] = "uartclk\0apb_pclk";
 
@@ -589,7 +592,8 @@ static void machvirt_init(MachineState *machine)
 
     create_gic(vbi, pic);
 
-    create_uart(vbi, pic);
+    create_uart(vbi, pic, VIRT_UART0);
+    create_uart(vbi, pic, VIRT_UART1);
 
     create_rtc(vbi, pic);
 
