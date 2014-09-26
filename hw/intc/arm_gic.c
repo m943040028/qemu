@@ -45,9 +45,95 @@ static inline int gic_get_current_cpu(GICState *s)
     return 0;
 }
 
-/* TODO: Many places that call this routine could be optimized.  */
-/* Update interrupt status after enabled or pending bits have been changed.  */
-void gic_update(GICState *s)
+/* Security state of a read / write access */
+static inline bool ns_access(void)
+{
+    /* TODO: use actual security state */
+    return true;
+}
+
+inline void gic_update_with_grouping(GICState *s)
+{
+    int best_irq;
+    int best_prio;
+    int irq;
+    int irq_level;
+    int fiq_level;
+    int cpu;
+    int cm;
+    bool next_int;
+    bool next_grp0;
+    bool gicc_grp0_enabled;
+    bool gicc_grp1_enabled;
+
+    for (cpu = 0; cpu < NUM_CPU(s); cpu++) {
+        cm = 1 << cpu;
+        gicc_grp0_enabled = s->cpu_control[cpu][0] & GICC_CTLR_S_EN_GRP0;
+        gicc_grp1_enabled = s->cpu_control[cpu][1] & GICC_CTLR_S_EN_GRP1;
+        next_int = 0;
+        next_grp0 = 0;
+
+        s->current_pending[cpu] = 1023;
+        if ((!s->enabled_grp[0] && !s->enabled_grp[1])
+                || (!gicc_grp0_enabled && !gicc_grp1_enabled)) {
+            qemu_irq_lower(s->parent_irq[cpu]);
+            qemu_irq_lower(s->parent_fiq[cpu]);
+            return;
+        }
+
+        /* Determine highest priority pending interrupt */
+        best_prio = 0x100;
+        best_irq = 1023;
+        for (irq = 0; irq < s->num_irq; irq++) {
+            if (GIC_TEST_ENABLED(irq, cm) && gic_test_pending(s, irq, cm)) {
+                if (GIC_GET_PRIORITY(irq, cpu) < best_prio) {
+                    best_prio = GIC_GET_PRIORITY(irq, cpu);
+                    best_irq = irq;
+                }
+            }
+        }
+
+        /* Priority of IRQ higher than priority mask? */
+        if (best_prio < s->priority_mask[cpu]) {
+            s->current_pending[cpu] = best_irq;
+            if (GIC_TEST_GROUP0(best_irq, cm) && s->enabled_grp[0]) {
+                /* TODO: Add subpriority handling (binary point register) */
+                if (best_prio < s->running_priority[cpu]) {
+                    next_int = true;
+                    next_grp0 = true;
+                }
+            } else if (!GIC_TEST_GROUP0(best_irq, cm) && s->enabled_grp[1]) {
+                /* TODO: Add subpriority handling (binary point register) */
+                if (best_prio < s->running_priority[cpu]) {
+                    next_int = true;
+                    next_grp0 = false;
+                }
+            }
+        }
+
+        fiq_level = 0;
+        irq_level = 0;
+        if (next_int) {
+            if (next_grp0 && (s->cpu_control[cpu][0] & GICC_CTLR_S_FIQ_EN)) {
+                if (gicc_grp0_enabled) {
+                    fiq_level = 1;
+                    DPRINTF("Raised pending FIQ %d (cpu %d)\n", best_irq, cpu);
+                }
+            } else {
+                if ((next_grp0 && gicc_grp0_enabled)
+                     || (!next_grp0 && gicc_grp1_enabled)) {
+                    irq_level = 1;
+                    DPRINTF("Raised pending IRQ %d (cpu %d)\n", best_irq, cpu);
+                }
+            }
+        }
+        /* Set IRQ/FIQ signal */
+        qemu_set_irq(s->parent_irq[cpu], irq_level);
+        qemu_set_irq(s->parent_fiq[cpu], fiq_level);
+    }
+}
+
+inline void gic_update_no_grouping(GICState *s)
 {
     int best_irq;
     int best_prio;
@@ -59,7 +145,7 @@ void gic_update(GICState *s)
     for (cpu = 0; cpu < NUM_CPU(s); cpu++) {
         cm = 1 << cpu;
         s->current_pending[cpu] = 1023;
-        if (!s->enabled || !s->cpu_enabled[cpu]) {
+        if (!s->enabled || !(s->cpu_control[cpu][0] & 1)) {
             qemu_irq_lower(s->parent_irq[cpu]);
             return;
         }
@@ -83,6 +169,17 @@ void gic_update(GICState *s)
             }
         }
         qemu_set_irq(s->parent_irq[cpu], level);
+    }
+}
+
+/* TODO: Many places that call this routine could be optimized.  */
+/* Update interrupt status after enabled or pending bits have been changed.  */
+void gic_update(GICState *s)
+{
+    if (s->revision >= 2 || s->security_extn) {
+        gic_update_with_grouping(s);
+    } else {
+        gic_update_no_grouping(s);
     }
 }
 
@@ -183,10 +280,34 @@ uint32_t gic_acknowledge_irq(GICState *s, int cpu)
     int ret, irq, src;
     int cm = 1 << cpu;
     irq = s->current_pending[cpu];
+    bool isGrp0;
     if (irq == 1023
             || GIC_GET_PRIORITY(irq, cpu) >= s->running_priority[cpu]) {
         DPRINTF("ACK no pending IRQ\n");
         return 1023;
+    }
+
+    if (s->revision >= 2 || s->security_extn) {
+        isGrp0 = GIC_TEST_GROUP0(irq, (1 << cpu));
+        if ((isGrp0 && (!s->enabled_grp[0]
+                    || !(s->cpu_control[cpu][0] & GICC_CTLR_S_EN_GRP0)))
+           || (!isGrp0 && (!s->enabled_grp[1]
+                    || !(s->cpu_control[cpu][1] & GICC_CTLR_NS_EN_GRP1)))) {
+            return 1023;
+        }
+
+        if ((s->revision >= 2 && !s->security_extn)
+                || (s->security_extn && !ns_access())) {
+            if (!isGrp0 && !(s->cpu_control[cpu][0] & GICC_CTLR_S_ACK_CTL)) {
+                DPRINTF("Read of IAR ignored for Group1 interrupt %d "
+                        "(AckCtl disabled)\n", irq);
+                return 1022;
+            }
+        } else if (s->security_extn && ns_access() && isGrp0) {
+            DPRINTF("Non-secure read of IAR ignored for Group0 interrupt %d\n",
+                    irq);
+            return 1023;
+        }
     }
     s->last_active[irq][cpu] = s->running_irq[cpu];
 
@@ -226,11 +347,154 @@ uint32_t gic_acknowledge_irq(GICState *s, int cpu)
 
 void gic_set_priority(GICState *s, int cpu, int irq, uint8_t val)
 {
-    if (irq < GIC_INTERNAL) {
-        s->priority1[irq][cpu] = val;
-    } else {
-        s->priority2[(irq) - GIC_INTERNAL] = val;
+    uint8_t prio = val;
+
+    if (s->security_extn && ns_access()) {
+        if (GIC_TEST_GROUP0(irq, (1 << cpu))) {
+            return; /* Ignore Non-secure access of Group0 IRQ */
+        }
+        prio = 0x80 | (prio >> 1); /* Non-secure view */
     }
+
+    if (irq < GIC_INTERNAL) {
+        s->priority1[irq][cpu] = prio;
+    } else {
+        s->priority2[(irq) - GIC_INTERNAL] = prio;
+    }
+}
+
+uint32_t gic_get_priority(GICState *s, int cpu, int irq)
+{
+    uint32_t prio = GIC_GET_PRIORITY(irq, cpu);
+
+    if (s->security_extn && ns_access()) {
+        if (GIC_TEST_GROUP0(irq, (1 << cpu))) {
+            return 0; /* Non-secure access cannot read priority of Group0 IRQ */
+        }
+        prio = (prio << 1); /* Non-secure view */
+    }
+    return prio;
+}
+
+void gic_set_priority_mask(GICState *s, int cpu, uint8_t val)
+{
+    uint8_t pmask = (val & 0xff);
+
+    if (s->security_extn && ns_access()) {
+        if (s->priority_mask[cpu] & 0x80) {
+            /* Priority Mask in upper half */
+            pmask = 0x80 | (pmask >> 1);
+        } else {
+            /* Non-secure write ignored if priority mask is in lower half */
+            return;
+        }
+    }
+    s->priority_mask[cpu] = pmask;
+}
+
+uint32_t gic_get_priority_mask(GICState *s, int cpu)
+{
+    uint32_t pmask = s->priority_mask[cpu];
+
+    if (s->security_extn && ns_access()) {
+        if (pmask & 0x80) {
+            /* Priority Mask in upper half, return Non-secure view */
+            pmask = (pmask << 1);
+        } else {
+            /* Priority Mask in lower half, RAZ */
+            pmask = 0;
+        }
+    }
+    return pmask;
+
+}
+
+uint32_t gic_get_cpu_control(GICState *s, int cpu)
+{
+    if ((s->revision >= 2 && !s->security_extn)
+            || (s->security_extn && !ns_access())) {
+        return s->cpu_control[cpu][0];
+    } else if (s->security_extn && ns_access()) {
+        return s->cpu_control[cpu][1];
+    } else {
+        return s->cpu_control[cpu][0];
+    }
+}
+
+void gic_set_cpu_control(GICState *s, int cpu, uint32_t value)
+{
+    /* CPU Interface Control is banked for GICv2 and GICv1 with Security Extn */
+    if ((s->revision >= 2 && !s->security_extn)
+            || (s->security_extn && !ns_access())) {
+        /* Write to Secure instance of the register */
+        s->cpu_control[cpu][0] = (value & GICC_CTLR_S_MASK);
+        /* Synchronize EnableGrp1 alias of Non-secure copy */
+        s->cpu_control[cpu][1] &= ~GICC_CTLR_NS_EN_GRP1;
+        s->cpu_control[cpu][1] |= (value & GICC_CTLR_S_EN_GRP1) ?
+                GICC_CTLR_NS_EN_GRP1 : 0;
+
+        DPRINTF("CPU Interface %d: Group0 Interrupts %sabled, "
+                "Group1 Interrupts %sabled\n", cpu,
+                (s->cpu_control[cpu][0] & GICC_CTLR_S_EN_GRP0) ? "En" : "Dis",
+                (s->cpu_control[cpu][0] & GICC_CTLR_S_EN_GRP1) ? "En" : "Dis");
+    } else if (s->security_extn && ns_access()) {
+        /* Write to Non-secure instance of the register */
+        s->cpu_control[cpu][1] = (value & GICC_CTLR_NS_MASK);
+        /* Synchronize EnableGrp1 alias of Secure copy */
+        s->cpu_control[cpu][0] &= ~GICC_CTLR_S_EN_GRP1;
+        s->cpu_control[cpu][0] |= (value & GICC_CTLR_NS_EN_GRP1) ?
+                GICC_CTLR_S_EN_GRP1 : 0;
+
+        DPRINTF("CPU Interface %d: Group1 Interrupts %sabled\n", cpu,
+                (s->cpu_control[cpu][1] & GICC_CTLR_NS_EN_GRP1) ? "En" : "Dis");
+    } else {
+        s->cpu_control[cpu][0] = (value & 1);
+
+        DPRINTF("CPU Interface %d %sabled\n", cpu,
+                s->cpu_control[cpu][0] ? "En" : "Dis");
+    }
+}
+
+uint8_t gic_get_running_priority(GICState *s, int cpu)
+{
+    if (s->security_extn && ns_access()) {
+        if (s->running_priority[cpu] & 0x80) {
+            /* Running priority in upper half, return Non-secure view */
+            return s->running_priority[cpu] << 1;
+        } else {
+            /* Running priority in lower half, RAZ */
+            return 0;
+        }
+    } else {
+        return s->running_priority[cpu];
+    }
+}
+
+uint16_t gic_get_current_pending_irq(GICState *s, int cpu)
+{
+    bool isGrp0;
+    uint16_t pendingId = s->current_pending[cpu];
+
+    if (pendingId < GIC_MAXIRQ && (s->revision >= 2 || s->security_extn)) {
+        isGrp0 = GIC_TEST_GROUP0(pendingId, (1 << cpu));
+        if ((isGrp0 && !s->enabled_grp[0])
+                || (!isGrp0 && !s->enabled_grp[1])) {
+            return 1023;
+        }
+        if (s->security_extn) {
+            if (isGrp0 && ns_access()) {
+                /* Group0 interrupts hidden from Non-secure access */
+                return 1023;
+            }
+            if (!isGrp0 && !ns_access()
+                    && !(s->cpu_control[cpu][0] & GICC_CTLR_S_ACK_CTL)) {
+                /* Group1 interrupts only seen by Secure access if
+                 * AckCtl bit set. */
+                return 1022;
+            }
+        }
+    }
+    return pendingId;
 }
 
 void gic_complete_irq(GICState *s, int cpu, int irq)
@@ -261,6 +525,21 @@ void gic_complete_irq(GICState *s, int cpu, int irq)
             GIC_SET_PENDING(irq, cm);
             update = 1;
         }
+    } else if ((s->revision >= 2 && !s->security_extn)
+                 || (s->security_extn && !ns_access())) {
+        /* Handle GICv2 without Security Extensions or GIC with Security
+         * Extensions and a secure write.
+         */
+        if (!GIC_TEST_GROUP0(irq, cm)
+                && !(s->cpu_control[cpu][0] & GICC_CTLR_S_ACK_CTL)) {
+            /* Unpredictable. We choose to ignore. */
+            DPRINTF("EOI for Group1 interrupt %d ignored "
+                    "(AckCtl disabled)\n", irq);
+            return;
+        }
+    } else if (s->security_extn && ns_access() && GIC_TEST_GROUP0(irq, cm)) {
+        DPRINTF("Non-secure EOI for Group0 interrupt %d ignored\n", irq);
+        return;
     }
 
     if (irq != s->running_irq[cpu]) {
@@ -295,15 +574,46 @@ static uint32_t gic_dist_readb(void *opaque, hwaddr offset)
     cpu = gic_get_current_cpu(s);
     cm = 1 << cpu;
     if (offset < 0x100) {
-        if (offset == 0)
-            return s->enabled;
+        if (offset == 0) {
+            res = 0;
+            if ((s->revision == 2 && !s->security_extn)
+                    || (s->security_extn && !ns_access())) {
+                res = (s->enabled_grp[1] << 1) | s->enabled_grp[0];
+            } else if (s->security_extn && ns_access()) {
+                res = s->enabled_grp[1];
+            } else {
+                /* Neither GICv2 nor Security Extensions present */
+                res = s->enabled;
+            }
+        }
         if (offset == 4)
-            return ((s->num_irq / 32) - 1) | ((NUM_CPU(s) - 1) << 5);
+            /* Interrupt Controller Type Register */
+            return ((s->num_irq / 32) - 1)
+                    | ((NUM_CPU(s) - 1) << 5)
+                    | (s->security_extn << 10);
         if (offset < 0x08)
             return 0;
         if (offset >= 0x80) {
-            /* Interrupt Security , RAZ/WI */
-            return 0;
+            /* Interrupt Group Registers
+             *
+             * For GIC with Security Extn and Non-secure access RAZ/WI
+             * For GICv1 without Security Extn RAZ/WI
+             */
+            res = 0;
+            if (!(s->security_extn && ns_access()) &&
+                    ((s->revision == 1 && s->security_extn)
+                            || s->revision == 2)) {
+                irq = (offset - 0x080) * 8 + GIC_BASE_IRQ;
+                if (irq >= s->num_irq) {
+                    goto bad_reg;
+                }
+                for (i = 0; i < 8; i++) {
+                    if (!GIC_TEST_GROUP0(irq + i, cm)) {
+                        res |= (1 << i);
+                    }
+                }
+            }
+            return res;
         }
         goto bad_reg;
     } else if (offset < 0x200) {
@@ -354,7 +664,7 @@ static uint32_t gic_dist_readb(void *opaque, hwaddr offset)
         irq = (offset - 0x400) + GIC_BASE_IRQ;
         if (irq >= s->num_irq)
             goto bad_reg;
-        res = GIC_GET_PRIORITY(irq, cpu);
+        res = gic_get_priority(s, cpu, irq);
     } else if (offset < 0xc00) {
         /* Interrupt CPU Target.  */
         if (s->num_cpu == 1 && s->revision != REV_11MPCORE) {
@@ -442,12 +752,51 @@ static void gic_dist_writeb(void *opaque, hwaddr offset,
     cpu = gic_get_current_cpu(s);
     if (offset < 0x100) {
         if (offset == 0) {
-            s->enabled = (value & 1);
-            DPRINTF("Distribution %sabled\n", s->enabled ? "En" : "Dis");
+            if ((s->revision == 2 && !s->security_extn)
+                    || (s->security_extn && !ns_access())) {
+                s->enabled_grp[0] = value & (1U << 0); /* EnableGrp0 */
+                /* For a GICv1 with Security Extn "EnableGrp1" is IMPDEF. */
+                s->enabled_grp[1] = value & (1U << 1); /* EnableGrp1 */
+                DPRINTF("Group0 distribution %sabled\n"
+                        "Group1 distribution %sabled\n",
+                                        s->enabled_grp[0] ? "En" : "Dis",
+                                        s->enabled_grp[1] ? "En" : "Dis");
+            } else if (s->security_extn && ns_access()) {
+                s->enabled_grp[1] = (value & 1U);
+                DPRINTF("Group1 distribution %sabled\n",
+                        s->enabled_grp[1] ? "En" : "Dis");
+            } else {
+                /* Neither GICv2 nor Security Extensions present */
+                s->enabled = (value & 1U);
+                DPRINTF("Distribution %sabled\n", s->enabled ? "En" : "Dis");
+            }
         } else if (offset < 4) {
             /* ignored.  */
         } else if (offset >= 0x80) {
-            /* Interrupt Security Registers, RAZ/WI */
+            /* Interrupt Group Registers
+             *
+             * For GIC with Security Extn and Non-secure access RAZ/WI
+             * For GICv1 without Security Extn RAZ/WI
+             */
+            if (!(s->security_extn && ns_access()) &&
+                    ((s->revision == 1 && s->security_extn)
+                            || s->revision == 2)) {
+                irq = (offset - 0x080) * 8 + GIC_BASE_IRQ;
+                if (irq >= s->num_irq) {
+                    goto bad_reg;
+                }
+                for (i = 0; i < 8; i++) {
+                    /* Group bits are banked for private interrupts (internal)*/
+                    int cm = (irq < GIC_INTERNAL) ? (1 << cpu) : ALL_CPU_MASK;
+                    if (value & (1 << i)) {
+                        /* Group1 (Non-secure) */
+                        GIC_SET_GROUP1(irq + i, cm);
+                    } else {
+                        /* Group0 (Secure) */
+                        GIC_SET_GROUP0(irq + i, cm);
+                    }
+                }
+            }
         } else {
             goto bad_reg;
         }
@@ -668,19 +1017,31 @@ static uint32_t gic_cpu_read(GICState *s, int cpu, int offset)
 {
     switch (offset) {
     case 0x00: /* Control */
-        return s->cpu_enabled[cpu];
+        return gic_get_cpu_control(s, cpu);
     case 0x04: /* Priority mask */
-        return s->priority_mask[cpu];
+        return gic_get_priority_mask(s, cpu);
     case 0x08: /* Binary Point */
-        return s->bpr[cpu];
+        if (s->security_extn && ns_access()) {
+            /* BPR is banked. Non-secure copy stored in ABPR. */
+            return s->abpr[cpu];
+        } else {
+            return s->bpr[cpu];
+        }
     case 0x0c: /* Acknowledge */
         return gic_acknowledge_irq(s, cpu);
     case 0x14: /* Running Priority */
-        return s->running_priority[cpu];
+        return gic_get_running_priority(s, cpu);
     case 0x18: /* Highest Pending Interrupt */
-        return s->current_pending[cpu];
+        return gic_get_current_pending_irq(s, cpu);
     case 0x1c: /* Aliased Binary Point */
-        return s->abpr[cpu];
+        if ((s->security_extn && ns_access())) {
+            /* If Security Extensions are present ABPR is a secure register,
+             * only accessible from secure state.
+             */
+            return 0;
+        } else {
+            return s->abpr[cpu];
+        }
     case 0xd0: case 0xd4: case 0xd8: case 0xdc:
         return s->apr[(offset - 0xd0) / 4][cpu];
     default:
@@ -694,19 +1055,21 @@ static void gic_cpu_write(GICState *s, int cpu, int offset, uint32_t value)
 {
     switch (offset) {
     case 0x00: /* Control */
-        s->cpu_enabled[cpu] = (value & 1);
-        DPRINTF("CPU %d %sabled\n", cpu, s->cpu_enabled[cpu] ? "En" : "Dis");
-        break;
+        return gic_set_cpu_control(s, cpu, value);
     case 0x04: /* Priority mask */
-        s->priority_mask[cpu] = (value & 0xff);
-        break;
+        return gic_set_priority_mask(s, cpu, value);
     case 0x08: /* Binary Point */
-        s->bpr[cpu] = (value & 0x7);
+        if (s->security_extn && ns_access()) {
+            /* BPR is banked. Non-secure copy stored in ABPR. */
+            s->abpr[cpu] = (value & 0x7);
+        } else {
+            s->bpr[cpu] = (value & 0x7);
+        }
         break;
     case 0x10: /* End Of Interrupt */
         return gic_complete_irq(s, cpu, value & 0x3ff);
     case 0x1c: /* Aliased Binary Point */
-        if (s->revision >= 2) {
+        if (s->revision >= 2 && !(s->security_extn && ns_access())) {
             s->abpr[cpu] = (value & 0x7);
         }
         break;
@@ -788,6 +1151,9 @@ void gic_init_irqs_and_distributor(GICState *s, int num_irq)
     qdev_init_gpio_in(DEVICE(s), gic_set_irq, i);
     for (i = 0; i < NUM_CPU(s); i++) {
         sysbus_init_irq(sbd, &s->parent_irq[i]);
+    }
+    for (i = 0; i < NUM_CPU(s); i++) {
+        sysbus_init_irq(sbd, &s->parent_fiq[i]);
     }
     memory_region_init_io(&s->iomem, OBJECT(s), &gic_dist_ops, s,
                           "gic_dist", 0x1000);

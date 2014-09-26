@@ -52,6 +52,7 @@ static const VMStateDescription vmstate_gic_irq_state = {
         VMSTATE_UINT8(level, gic_irq_state),
         VMSTATE_BOOL(model, gic_irq_state),
         VMSTATE_BOOL(edge_trigger, gic_irq_state),
+        VMSTATE_UINT8(group, gic_irq_state),
         VMSTATE_END_OF_LIST()
     }
 };
@@ -63,8 +64,8 @@ static const VMStateDescription vmstate_gic = {
     .pre_save = gic_pre_save,
     .post_load = gic_post_load,
     .fields = (VMStateField[]) {
-        VMSTATE_BOOL(enabled, GICState),
-        VMSTATE_BOOL_ARRAY(cpu_enabled, GICState, GIC_NCPU),
+        VMSTATE_UINT8_ARRAY(enabled_grp, GICState, GIC_NR_GROUP),
+        VMSTATE_UINT32_2DARRAY(cpu_control, GICState, GIC_NCPU, GIC_NR_GROUP),
         VMSTATE_STRUCT_ARRAY(irq_state, GICState, GIC_MAXIRQ, 1,
                              vmstate_gic_irq_state, gic_irq_state),
         VMSTATE_UINT8_ARRAY(irq_target, GICState, GIC_MAXIRQ),
@@ -126,7 +127,8 @@ static void arm_gic_common_reset(DeviceState *dev)
         s->current_pending[i] = 1023;
         s->running_irq[i] = 1023;
         s->running_priority[i] = 0x100;
-        s->cpu_enabled[i] = false;
+        s->cpu_control[i][0] = false;
+        s->cpu_control[i][1] = false;
     }
     for (i = 0; i < GIC_NR_SGIS; i++) {
         GIC_SET_ENABLED(i, ALL_CPU_MASK);
@@ -149,6 +151,7 @@ static Property arm_gic_common_properties[] = {
      * (Internally, 0xffffffff also indicates "not a GIC but an NVIC".)
      */
     DEFINE_PROP_UINT32("revision", GICState, revision, 1),
+    DEFINE_PROP_UINT8("security-extn", GICState, security_extn, 0),
     DEFINE_PROP_END_OF_LIST(),
 };
 
