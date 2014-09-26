@@ -3664,6 +3664,7 @@ unsigned int arm_excp_target_el(CPUState *cs, unsigned int excp_idx)
 
     switch (excp_idx) {
     case EXCP_HVC:
+    case EXCP_HYP_TRAP:
         target_el = 2;
         break;
     default:
