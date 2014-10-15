@@ -290,11 +290,13 @@ static uint64_t pcsc_reader_read(PCSCState *s, Reader *r, hwaddr offset,
     switch (offset) {
     case PCSC_REG_READER_CONTROL:
         return r->ctrl_reg;
+    case PCSC_REG_READER_STATE:
+        return r->state->dwEventState;
     case PCSC_REG_READER_ADDR:
         return r->addr;
     default:
         qemu_log_mask(LOG_GUEST_ERROR,
-                      "pcsc_reader_write: Bad offset %x\n", (int)offset);
+                      "pcsc_reader_read: Bad offset %x\n", (int)offset);
         return 0;
     }
 }
