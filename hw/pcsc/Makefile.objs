@@ -1,0 +1,4 @@
+
+obj-y += device.o
+device.o-cflags := -I/usr/include/PCSC
+device.o-libs := -lpcsclite

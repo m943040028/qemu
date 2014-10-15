@@ -335,6 +335,7 @@ libssh2=""
 vhdx=""
 quorum=""
 numa=""
+pcsc=""
 
 # parse CC options first
 for opt do
@@ -1128,6 +1129,10 @@ for opt do
   --disable-numa) numa="no"
   ;;
   --enable-numa) numa="yes"
+  ;;
+  --disable-pcsc-passthru) pcsc="no"
+  ;;
+  --enable-pcsc-passthru) pcsc="yes"
   ;;
   *)
       echo "ERROR: unknown option $opt"
@@ -4325,6 +4330,7 @@ echo "Quorum            $quorum"
 echo "lzo support       $lzo"
 echo "snappy support    $snappy"
 echo "NUMA host support $numa"
+echo "PCSC Passthrough  $pcsc"
 
 if test "$sdl_too_old" = "yes"; then
 echo "-> Your SDL version is too old - please upgrade to have SDL support"
@@ -5316,6 +5322,10 @@ fi
 
 if test "$numa" = "yes"; then
   echo "CONFIG_NUMA=y" >> $config_host_mak
+fi
+
+if test "$pcsc" = "yes"; then
+  echo "CONFIG_PCSC_PASSTHRU=y" >> $config_host_mak
 fi
 
 # build tree in object directory in case the source is not in the current directory
