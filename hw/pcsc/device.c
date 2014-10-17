@@ -103,6 +103,7 @@ do { \
 #define     PCSC_READER_CTL_CONNECT         0x1000
 #define     PCSC_READER_CTL_DISCONNECT      0x2000
 #define     PCSC_READER_CTL_READ_ATR        0x4000
+#define     PCSC_READER_CTL_TRANSMIT         0x8000
 #define PCSC_REG_READER_STATE   0x4
 /* reader state, directly mapped to pcsclite */
 #define     PCSC_READER_STATE_IGNORE    0x0001
@@ -282,6 +283,23 @@ static int reader_disconnect(PCSCState *s, Reader *r)
     return 0;
 }
 
+static void reader_transmit(PCSCState *s, Reader *r, char *tx_buf, size_t tx_size,
+                            char *rx_buf, size_t *rx_size)
+{
+    LONG rv;
+    const SCARD_IO_REQUEST *tx_req = NULL;
+    SCARD_IO_REQUEST rx_req;
+
+    if (r->active_protocol & SCARD_PROTOCOL_T0)
+        tx_req = SCARD_PCI_T0;
+    else if (r->active_protocol & SCARD_PROTOCOL_T1)
+        tx_req = SCARD_PCI_T1;
+
+    rv = SCardTransmit(r->handle, tx_req, (LPBYTE)tx_buf, tx_size,
+                        &rx_req, (LPBYTE)rx_buf, rx_size);
+    test_rv("SCardTransmit", rv, s->context);
+}
+
 static void *monitor_thread(void *opaque)
 {
     PCSCState *s = opaque;
@@ -373,6 +391,15 @@ static void pcsc_reader_write(PCSCState *s, Reader *r, hwaddr offset,
                 length = r->rx_size;
             }
             cpu_physical_memory_write(r->rx_addr, r->atr, length);
+        }
+        else if (value & PCSC_READER_CTL_TRANSMIT) {
+            char tx_buf[MAX_BUFFER_SIZE], rx_buf[MAX_BUFFER_SIZE];
+            size_t rx_size = sizeof(rx_buf);
+
+            cpu_physical_memory_read(r->tx_addr, tx_buf, r->tx_size);
+            reader_transmit(s, r, tx_buf, r->tx_size, rx_buf, &rx_size);
+            cpu_physical_memory_write(r->rx_addr, rx_buf, rx_size);
+            r->rx_size = rx_size;
         }
         break;
     case PCSC_REG_READER_TX_ADDR:
