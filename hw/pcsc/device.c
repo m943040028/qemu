@@ -28,12 +28,18 @@
 typedef struct Reader {
     uint8_t index;
     uint32_t ctrl_reg;
-    uint32_t addr;
+    uint32_t tx_addr;
+    uint32_t tx_size;
+    uint32_t rx_addr;
+    uint32_t rx_size;
     char *name;
 
+    /* pcsc-lite related struct */
     SCARD_READERSTATE *state;
     SCARDHANDLE handle;
     DWORD active_protocol;
+    BYTE atr[MAX_ATR_SIZE];
+    DWORD atr_len;
 } Reader;
 
 typedef struct PCSCState {
@@ -70,7 +76,6 @@ do { \
 #define PCSC_REG_NUM_READERS    0x0
 #define PCSC_REG_IRQ_STATUS     0x4
 #define     PCSC_IRQ_STATE_CHANGE   0x1
-#define     PCSC_IRQ_TRANSIT_DONE   0x2
 #define PCSC_REG_MAX            0x8
 
 /* per-reader control/status registers */
@@ -82,18 +87,18 @@ do { \
 #define     PCSC_READER_CTL_PROTOCOL_RAW    0x0008
 #define     PCSC_READER_CTL_PROTOCOL_MASK   0x000f
 /* shared mode, directly mapped to pcsclite */
-#define     PCSC_READER_CTL_SHARE_EXCLUSIVE 0x0001
-#define     PCSC_READER_CTL_SHARE_SHARED    0x0002
-#define     PCSC_READER_CTL_SHARE_DIRECT    0x0003
 #define     PCSC_READER_CTL_SHARE_MASK      0x0030
 #define     PCSC_READER_CTL_SHARE_SHIFT     4
+#define     PCSC_READER_CTL_SHARE_EXCLUSIVE 0x0010
+#define     PCSC_READER_CTL_SHARE_SHARED    0x0020
+#define     PCSC_READER_CTL_SHARE_DIRECT    0x0030
 /* disposition mode, directly mapped to pcsclite */
-#define     PCSC_READER_CTL_DISPOSITION_LEAVE_CARD	0x0000
-#define     PCSC_READER_CTL_DISPOSITION_RESET_CARD	0x0001
-#define     PCSC_READER_CTL_DISPOSITION_UNPOWER_CARD 0x0002
-#define     PCSC_READER_CTL_DISPOSITION_EJECT_CARD  0x0003
-#define     PCSC_READER_CTL_DISPOSITION_MASK		0x0300
-#define     PCSC_READER_CTL_DISPOSITION_SHIFT	8
+#define     PCSC_READER_CTL_DISPOSITION_MASK    0x0300
+#define     PCSC_READER_CTL_DISPOSITION_SHIFT   8
+#define     PCSC_READER_CTL_DISPOSITION_LEAVE_CARD  0x0000
+#define     PCSC_READER_CTL_DISPOSITION_RESET_CARD  0x0100
+#define     PCSC_READER_CTL_DISPOSITION_UNPOWER_CARD 0x0200
+#define     PCSC_READER_CTL_DISPOSITION_EJECT_CARD  0x0300
 /* reader commands */
 #define     PCSC_READER_CTL_CONNECT         0x1000
 #define     PCSC_READER_CTL_DISCONNECT      0x2000
@@ -111,8 +116,12 @@ do { \
 #define     PCSC_READER_STATE_INUSE     0x0100
 #define     PCSC_READER_STATE_MUTE      0x0200
 #define     PCSC_READER_STATE_UNPOWERED 0x0400
-#define PCSC_REG_READER_ADDR    0x8
-#define PCSC_REG_READER_MAX     0xc
+#define PCSC_REG_READER_TX_ADDR    0x8
+#define PCSC_REG_READER_TX_SIZE    0xc
+#define PCSC_REG_READER_RX_ADDR    0x10
+#define PCSC_REG_READER_RX_SIZE    0x14
+#define PCSC_REG_READER_ATR_LEN    0x18
+#define PCSC_REG_READER_MAX     0x1c
  
 static void dump_reader_state(SCARD_READERSTATE *s) 
 {
@@ -151,7 +160,18 @@ static void dump_reader_state(SCARD_READERSTATE *s)
     qemu_log("]\n");
 }
 
-static void pcsc_update_irq(PCSCState *s) {
+static void print_hex(BYTE *buf, size_t size)
+{
+    int i;
+    for (i = 0; i < size; i++)
+    {
+        qemu_log("%02X ", buf[i]);
+    }
+    qemu_log("\n");
+}
+
+static void pcsc_update_irq(PCSCState *s)
+{
     qemu_set_irq(s->irq, !!s->irq_status);
 }
 
@@ -176,6 +196,8 @@ static void init_reader(char *name, uint8_t index, Reader *r, SCARD_READERSTATE 
     r->name = name;
     r->index = index;
     r->state = s;
+    r->atr_len = 0;
+    memset(r->atr, 0, sizeof(r->atr));
 
     s->szReader = name;
     s->dwCurrentState = SCARD_STATE_UNAWARE;
@@ -216,19 +238,33 @@ static void create_readers(PCSCState *s)
     }
 }
 
+static void reader_get_atr(PCSCState *s, Reader *r)
+{
+    DWORD state, protocol;
+    LONG rv;
+
+    r->atr_len = sizeof(r->atr);
+    rv = SCardStatus(r->handle, NULL, NULL, &state, &protocol, r->atr, &r->atr_len);
+    test_rv("SCardStatus", rv, s->context);
+
+    qemu_log("ReaderStatus %s: atr_len=%ld, atr:\n", r->name, r->atr_len);
+    print_hex(r->atr, r->atr_len);
+}
+
 static int reader_connect(PCSCState *s, Reader *r)
 {
     DWORD shared_mode = 0;
     DWORD prefered_protocol = 0;
     LONG rv;
 
-    shared_mode = (r->ctrl_reg >> PCSC_READER_CTL_SHARE_SHIFT) & PCSC_READER_CTL_SHARE_MASK;
+    shared_mode = (r->ctrl_reg & PCSC_READER_CTL_SHARE_MASK) >> PCSC_READER_CTL_SHARE_SHIFT;
     prefered_protocol = r->ctrl_reg & PCSC_READER_CTL_PROTOCOL_MASK;
 
     rv = SCardConnect(s->context, r->name, shared_mode, prefered_protocol,
                       &r->handle, &r->active_protocol);
     test_rv("SCardConnect", rv, s->context);
 
+    reader_get_atr(s, r);
     return 0;
 }
 
@@ -237,8 +273,8 @@ static int reader_disconnect(PCSCState *s, Reader *r)
     DWORD disposition_mode = 0;
     LONG rv;
 
-    disposition_mode = (r->ctrl_reg >> PCSC_READER_CTL_DISPOSITION_SHIFT)
-        & PCSC_READER_CTL_DISPOSITION_MASK;
+    disposition_mode = (r->ctrl_reg & PCSC_READER_CTL_DISPOSITION_MASK)
+        >> PCSC_READER_CTL_DISPOSITION_SHIFT;
 
     rv = SCardDisconnect(r->handle, disposition_mode);
     test_rv("SCardDisconnect", rv, s->context);
@@ -249,10 +285,14 @@ static int reader_disconnect(PCSCState *s, Reader *r)
 static void *monitor_thread(void *opaque)
 {
     PCSCState *s = opaque;
+    SCARDCONTEXT monitoring_context;
     LONG rv;
 
-    rv = SCardGetStatusChange(s->context, INFINITE, s->reader_state, s->num_readers);
-    test_rv("SCardGetStatusChange", rv, s->context);
+    rv = SCardEstablishContext(SCARD_SCOPE_SYSTEM, NULL, NULL, &monitoring_context);
+    test_rv("SCardEstablishContext", rv, monitoring_context);
+
+    rv = SCardGetStatusChange(monitoring_context, INFINITE, s->reader_state, s->num_readers);
+    test_rv("SCardGetStatusChange", rv, monitoring_context);
     while (1) {
         int i;
 
@@ -276,8 +316,8 @@ static void *monitor_thread(void *opaque)
         }
         pcsc_update_irq(s);
 
-        rv = SCardGetStatusChange(s->context, INFINITE, s->reader_state, s->num_readers);
-        test_rv("SCardGetStatusChange", rv, s->context);
+        rv = SCardGetStatusChange(monitoring_context, INFINITE, s->reader_state, s->num_readers);
+        test_rv("SCardGetStatusChange", rv, monitoring_context);
     }
 
     return NULL;
@@ -286,14 +326,23 @@ static void *monitor_thread(void *opaque)
 static uint64_t pcsc_reader_read(PCSCState *s, Reader *r, hwaddr offset,
                             unsigned size)
 {
+    qemu_log("pcsc_reader_read: offset %x, size:%d\n", (int)offset, size);
 
     switch (offset) {
     case PCSC_REG_READER_CONTROL:
         return r->ctrl_reg;
     case PCSC_REG_READER_STATE:
         return r->state->dwEventState;
-    case PCSC_REG_READER_ADDR:
-        return r->addr;
+    case PCSC_REG_READER_TX_ADDR:
+        return r->tx_addr;
+    case PCSC_REG_READER_TX_SIZE:
+        return r->tx_size;
+    case PCSC_REG_READER_RX_ADDR:
+        return r->rx_addr;
+    case PCSC_REG_READER_RX_SIZE:
+        return r->rx_size;
+    case PCSC_REG_READER_ATR_LEN:
+        return r->atr_len;
     default:
         qemu_log_mask(LOG_GUEST_ERROR,
                       "pcsc_reader_read: Bad offset %x\n", (int)offset);
@@ -304,6 +353,7 @@ static uint64_t pcsc_reader_read(PCSCState *s, Reader *r, hwaddr offset,
 static void pcsc_reader_write(PCSCState *s, Reader *r, hwaddr offset,
                         uint64_t value, unsigned size)
 {
+    qemu_log("pcsc_reader_write: offset %x, value: %lx, size:%d\n", (int)offset, value, size);
 
     switch (offset) {
     case PCSC_REG_READER_CONTROL:
@@ -314,9 +364,28 @@ static void pcsc_reader_write(PCSCState *s, Reader *r, hwaddr offset,
         else if (value & PCSC_READER_CTL_DISCONNECT) {
             reader_disconnect(s, r);
         }
+        else if (value & PCSC_READER_CTL_READ_ATR) {
+            size_t length = r->atr_len;
+            if (r->rx_size < r->atr_len)
+            {
+                qemu_log_mask(LOG_GUEST_ERROR,
+                        "Warnning: requested rx size is less than atr length\n");
+                length = r->rx_size;
+            }
+            cpu_physical_memory_write(r->rx_addr, r->atr, length);
+        }
         break;
-    case PCSC_REG_READER_ADDR:
-        r->addr = value;
+    case PCSC_REG_READER_TX_ADDR:
+        r->tx_addr = value;
+        break;
+    case PCSC_REG_READER_TX_SIZE:
+        r->tx_size = value;
+        break;
+    case PCSC_REG_READER_RX_ADDR:
+        r->rx_addr = value;
+        break;
+    case PCSC_REG_READER_RX_SIZE:
+        r->rx_size = value;
         break;
     default:
         qemu_log_mask(LOG_GUEST_ERROR,
