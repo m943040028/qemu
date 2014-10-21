@@ -66,8 +66,9 @@ typedef struct PCSCState {
 do { \
     if (rv != SCARD_S_SUCCESS) \
     { \
-        qemu_log("%s: %s\n", fct, pcsc_stringify_error(rv)); \
+        fprintf(stderr, "%s: %s\n", fct, pcsc_stringify_error(rv)); \
         (void)SCardReleaseContext(context); \
+        fprintf(stderr, "This should not happen, exiting..."); \
         exit(-1); \
     } \
 } while(0)
