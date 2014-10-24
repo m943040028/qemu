@@ -68,6 +68,9 @@ enum {
     VIRT_UART1,
     VIRT_MMIO,
     VIRT_RTC,
+#if defined(CONFIG_PCSC_PASSTHRU)
+    VIRT_PCSC,
+#endif
 };
 
 typedef struct MemMapEntry {
@@ -108,6 +111,9 @@ static const MemMapEntry a15memmap[] = {
     [VIRT_UART0] =      { 0x09000000, 0x00001000 },
     [VIRT_UART1] =      { 0x09010000, 0x00001000 },
     [VIRT_RTC] =        { 0x09020000, 0x00001000 },
+#if defined(CONFIG_PCSC_PASSTHRU)
+    [VIRT_PCSC] =         { 0x09100000, 0x00001000 },
+#endif
     [VIRT_MMIO] =       { 0x0a000000, 0x00000200 },
     /* ...repeating for a total of NUM_VIRTIO_TRANSPORTS, each of that size */
     /* 0x10000000 .. 0x40000000 reserved for PCI */
@@ -118,6 +124,9 @@ static const int a15irqmap[] = {
     [VIRT_UART0] = 1,
     [VIRT_UART1] = 2,
     [VIRT_RTC] = 3,
+#if defined(CONFIG_PCSC_PASSTHRU)
+    [VIRT_PCSC] = 4,
+#endif
     [VIRT_MMIO] = 16, /* ...to 16 + NUM_VIRTIO_TRANSPORTS - 1 */
 };
 
@@ -408,6 +417,29 @@ static void create_rtc(const VirtBoardInfo *vbi, qemu_irq *pic)
     g_free(nodename);
 }
 
+#if defined(CONFIG_PCSC_PASSTHRU)
+static void create_pcsc(const VirtBoardInfo *vbi, qemu_irq *pic)
+{
+    char *nodename;
+    hwaddr base = vbi->memmap[VIRT_PCSC].base;
+    hwaddr size = vbi->memmap[VIRT_PCSC].size;
+    int irq = vbi->irqmap[VIRT_PCSC];
+    const char compat[] = "linaro,pcsc-passthru";
+
+    sysbus_create_simple("pcsc-passthru", base, pic[irq]);
+
+    nodename = g_strdup_printf("/pcsc@%" PRIx64, base);
+    qemu_fdt_add_subnode(vbi->fdt, nodename);
+    qemu_fdt_setprop(vbi->fdt, nodename, "compatible", compat, sizeof(compat));
+    qemu_fdt_setprop_sized_cells(vbi->fdt, nodename, "reg",
+                                 2, base, 2, size);
+    qemu_fdt_setprop_cells(vbi->fdt, nodename, "interrupts",
+                           GIC_FDT_IRQ_TYPE_SPI, irq,
+                           GIC_FDT_IRQ_FLAGS_LEVEL_HI);
+    g_free(nodename);
+}
+#endif
+
 static void create_virtio_devices(const VirtBoardInfo *vbi, qemu_irq *pic)
 {
     int i;
@@ -596,6 +628,10 @@ static void machvirt_init(MachineState *machine)
     create_uart(vbi, pic, VIRT_UART1);
 
     create_rtc(vbi, pic);
+
+#if defined(CONFIG_PCSC_PASSTHRU)
+    create_pcsc(vbi, pic);
+#endif
 
     /* Create mmio transports, so the user can create virtio backends
      * (which will be automatically plugged in to the transports). If
