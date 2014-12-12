@@ -399,6 +399,12 @@ static void pcsc_reader_write(PCSCState *s, Reader *r, hwaddr offset,
 
             cpu_physical_memory_read(r->tx_addr, tx_buf, r->tx_size);
             reader_transmit(s, r, tx_buf, r->tx_size, rx_buf, &rx_size);
+            if (r->rx_size < rx_size)
+            {
+                qemu_log_mask(LOG_GUEST_ERROR,
+                        "Warnning: requested rx size is less than resp length\n");
+                rx_size = r->rx_size;
+            }
             cpu_physical_memory_write(r->rx_addr, rx_buf, rx_size);
             r->rx_size = rx_size;
         }
