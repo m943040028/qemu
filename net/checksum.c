@@ -18,9 +18,7 @@
 #include "qemu/osdep.h"
 #include "qemu-common.h"
 #include "net/checksum.h"
-
-#define PROTO_TCP  6
-#define PROTO_UDP 17
+#include "net/eth.h"
 
 uint32_t net_checksum_add_cont(int len, uint8_t *buf, int seq)
 {
@@ -57,40 +55,73 @@ uint16_t net_checksum_tcpudp(uint16_t length, uint16_t proto,
 
 void net_checksum_calculate(uint8_t *data, int length)
 {
-    int hlen, plen, proto, csum_offset;
-    uint16_t csum;
+    int plen;
+    struct ip_header *ip;
 
-    /* Ensure data has complete L2 & L3 headers. */
-    if (length < 14 + 20) {
+    /* Ensure we have at least a Eth header */
+    if (length < sizeof(struct eth_header)) {
         return;
     }
 
-    if ((data[14] & 0xf0) != 0x40)
-	return; /* not IPv4 */
-    hlen  = (data[14] & 0x0f) * 4;
-    plen  = (data[16] << 8 | data[17]) - hlen;
-    proto = data[23];
+    /* Now check we have an IP header (with an optonnal VLAN header */
+    if (length < eth_get_l2_hdr_length(data) + sizeof(struct ip_header)) {
+        return;
+    }
 
-    switch (proto) {
-    case PROTO_TCP:
-	csum_offset = 16;
+    ip = PKT_GET_IP_HDR(data);
+
+    if (IP_HEADER_VERSION(ip) != IP_HEADER_VERSION_4) {
+	return; /* not IPv4 */
+    }
+
+    /* Last, check that we have enough data for the IP frame */
+    if (length < eth_get_l2_hdr_length(data) + be16_to_cpu(ip->ip_len)) {
+        return;
+    }
+
+    plen  = be16_to_cpu(ip->ip_len) - IP_HDR_GET_LEN(ip);
+
+    switch (ip->ip_p) {
+    case IP_PROTO_TCP:
+        {
+            uint16_t csum;
+            tcp_header *tcp = (tcp_header *)(ip + 1);
+
+            if (plen < sizeof(tcp_header)) {
+                return;
+            }
+
+            tcp->th_sum = 0;
+
+            csum = net_checksum_tcpudp(plen, ip->ip_p,
+                                       (uint8_t *)&ip->ip_src,
+                                       (uint8_t *)tcp);
+
+            tcp->th_sum = cpu_to_be16(csum);
+        }
 	break;
-    case PROTO_UDP:
-	csum_offset = 6;
+    case IP_PROTO_UDP:
+        {
+            uint16_t csum;
+            udp_header *udp = (udp_header *)(ip + 1);
+
+            if (plen < sizeof(udp_header)) {
+                return;
+            }
+
+            udp->uh_sum = 0;
+
+            csum = net_checksum_tcpudp(plen, ip->ip_p,
+                                       (uint8_t *)&ip->ip_src,
+                                       (uint8_t *)udp);
+
+            udp->uh_sum = cpu_to_be16(csum);
+        }
 	break;
     default:
+        /* Can't handle any other protocol */
 	return;
     }
-
-    if (plen < csum_offset + 2 || 14 + hlen + plen > length) {
-        return;
-    }
-
-    data[14+hlen+csum_offset]   = 0;
-    data[14+hlen+csum_offset+1] = 0;
-    csum = net_checksum_tcpudp(plen, proto, data+14+12, data+14+hlen);
-    data[14+hlen+csum_offset]   = csum >> 8;
-    data[14+hlen+csum_offset+1] = csum & 0xff;
 }
 
 uint32_t
