@@ -823,6 +823,7 @@ static void imx_eth_write(void *opaque, hwaddr offset, uint64_t value,
         break;
     case ENET_ECR:
         if (value & ENET_ECR_RESET) {
+            value &= ~ENET_ECR_RESET;
             value &= ~ENET_ECR_ETHEREN;
             s->regs[ENET_RDAR] = 0;
             s->regs[ENET_TDAR] = 0;

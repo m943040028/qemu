@@ -26,7 +26,7 @@ typedef struct IMX6Sabrelite {
 
 static struct arm_boot_info sabrelite_binfo = {
     /* DDR memory start */
-    .loader_start = FSL_IMX6_MMDC_ADDR,
+    .loader_start = FSL_IMX6_MMDC_ADDR + 0x10000000,
     /* No board ID, we boot from DT tree */
     .board_id = -1,
 };
